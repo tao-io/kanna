@@ -42,7 +42,8 @@
     "prepublishOnly": "vite build"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.39"
+    "@anthropic-ai/claude-agent-sdk": "^0.2.39",
+    "@radix-ui/react-context-menu": "^2.2.16"
   },
   "devDependencies": {
     "@dnd-kit/core": "^6.3.1",

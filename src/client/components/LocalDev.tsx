@@ -15,6 +15,7 @@ import {
 import { APP_NAME, getCliInvocation, SDK_CLIENT_APP } from "../../shared/branding"
 import type { LocalProjectsSnapshot } from "../../shared/types"
 import type { SocketStatus } from "../app/socket"
+import { PageHeader } from "../app/PageHeader"
 import { getPathBasename } from "../lib/formatters"
 import { cn } from "../lib/utils"
 import { NewProjectModal } from "./NewProjectModal"
@@ -73,30 +74,6 @@ function SectionHeader({ children }: { children: ReactNode }) {
     <h2 className="text-[13px] font-medium text-muted-foreground uppercase tracking-wider mb-3">
       {children}
     </h2>
-  )
-}
-
-function PageHeader({
-  narrow = false,
-  title,
-  subtitle,
-  icon: Icon = Monitor,
-}: {
-  narrow?: boolean
-  title: string
-  subtitle: string
-  icon?: ComponentType<{ className?: string }>
-}) {
-  return (
-    <div className={cn("w-full", narrow ? "max-w-2xl px-6 pt-16 mx-auto" : "px-6 pt-16 mb-10")}>
-      <div className={cn("flex items-center gap-3 mb-2", narrow && "justify-center")}>
-        <div className="p-2 pl-0 rounded-lg">
-          <Icon className="h-6 w-6 text-muted-foreground" />
-        </div>
-        <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
-      </div>
-      <p className={cn("text-muted-foreground", narrow && "mb-10 text-center")}>{subtitle}</p>
-    </div>
   )
 }
 

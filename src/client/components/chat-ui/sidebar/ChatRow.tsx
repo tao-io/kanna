@@ -1,7 +1,8 @@
-import { Loader2, X } from "lucide-react"
+import { Archive, Loader2 } from "lucide-react"
 import type { SidebarChatRow } from "../../../../shared/types"
 import { AnimatedShinyText } from "../../ui/animated-shiny-text"
 import { Button } from "../../ui/button"
+import { formatSidebarAgeLabel } from "../../../lib/formatters"
 import { cn, normalizeChatId } from "../../../lib/utils"
 
 const loadingStatuses = new Set(["starting", "running"])
@@ -9,6 +10,7 @@ const loadingStatuses = new Set(["starting", "running"])
 interface Props {
   chat: SidebarChatRow
   activeChatId: string | null
+  nowMs: number
   onSelectChat: (chatId: string) => void
   onDeleteChat: (chatId: string) => void
 }
@@ -16,16 +18,19 @@ interface Props {
 export function ChatRow({
   chat,
   activeChatId,
+  nowMs,
   onSelectChat,
   onDeleteChat,
 }: Props) {
+  const ageLabel = formatSidebarAgeLabel(chat.lastMessageAt, nowMs)
+
   return (
     <div
       key={chat._id}
       data-chat-id={normalizeChatId(chat.chatId)}
       className={cn(
-        "group flex items-center gap-2 pl-2.5 pr-0.5 py-0.5 rounded-md cursor-pointer border-border/0 hover:border-border hover:bg-muted active:bg-muted border transition-colors",
-        activeChatId === normalizeChatId(chat.chatId) ? "bg-muted border-border" : "border-border/0 dark:hover:border-slate-400/10 "
+        "group flex items-center gap-2 pl-2.5 pr-0.5 py-0.5 rounded-lg cursor-pointer border-border/0 hover:border-border hover:bg-muted/20 active:scale-[0.985] border transition-all",
+        activeChatId === normalizeChatId(chat.chatId) ? "bg-muted hover:bg-muted border-border" : "border-border/0 dark:hover:border-slate-400/10 "
       )}
       onClick={() => onSelectChat(chat.chatId)}
     >
@@ -51,18 +56,30 @@ export function ChatRow({
           chat.title
         )}
       </span>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7 opacity-100 md:opacity-0 md:group-hover:opacity-100 cursor-pointer rounded-sm hover:!bg-transparent"
-        onClick={(event) => {
-          event.stopPropagation()
-          onDeleteChat(chat.chatId)
-        }}
-        title="Delete chat"
-      >
-        <X className="size-3.5" />
-      </Button>
+      <div className="relative h-7 w-7 mr-[2px] shrink-0">
+        {ageLabel ? (
+          <span className="hidden md:flex absolute inset-0 items-center justify-end pr-1 text-[11px] text-muted-foreground opacity-50 transition-opacity group-hover:opacity-0">
+            {ageLabel}
+          </span>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "absolute inset-0 h-7 w-7 opacity-100 cursor-pointer rounded-sm hover:!bg-transparent !border-0",
+            ageLabel
+              ? "md:opacity-0 md:group-hover:opacity-100"
+              : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
+          )}
+          onClick={(event) => {
+            event.stopPropagation()
+            onDeleteChat(chat.chatId)
+          }}
+          title="Delete chat"
+        >
+          <Archive className="size-3.5" />
+        </Button>
+      </div>
     </div>
   )
 }

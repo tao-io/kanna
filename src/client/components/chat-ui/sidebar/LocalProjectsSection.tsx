@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo, useRef } from "react"
-import { ChevronRight, Folder, FolderOpen, Loader2, SquarePen } from "lucide-react"
+import { ChevronRight, FolderOpen, Loader2, SquarePen } from "lucide-react"
 import {
   DndContext,
   PointerSensor,
@@ -87,6 +87,70 @@ function SortableProjectGroup({
     transition,
   }
 
+  const header = (
+    <div
+      ref={setActivatorNodeRef}
+      className={cn(
+        "sticky top-0 bg-background dark:bg-card z-10 relative p-[10px] flex items-center justify-between",
+        "cursor-grab active:cursor-grabbing",
+        isDragging && "cursor-grabbing"
+      )}
+      onClick={() => onToggleSection(groupKey)}
+      {...listeners}
+    >
+      <div className="flex items-center gap-2">
+        <span className="relative size-3.5 shrink-0 cursor-pointer">
+          {collapsedSections.has(groupKey) ? (
+            <ChevronRight className="translate-y-[1px] size-3.5 shrink-0 text-slate-400 transition-all duration-200" />
+          ) : (
+            <>
+              <FolderOpen className="absolute inset-0 translate-y-[1px] size-3.5 shrink-0 text-slate-400 dark:text-slate-500 transition-all duration-200 group-hover/section:opacity-0" />
+              <ChevronRight className="absolute inset-0 translate-y-[1px] size-3.5 shrink-0 rotate-90 text-slate-400 opacity-0 transition-all duration-200 group-hover/section:opacity-100" />
+            </>
+          )}
+        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="truncate max-w-[150px] whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">
+              {getPathBasename(localPath)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={4}>
+            {localPath}
+          </TooltipContent>
+        </Tooltip>
+      </div>
+      {onNewLocalChat && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "h-5.5 w-5.5 absolute right-2 !rounded opacity-100 md:opacity-0 md:group-hover/section:opacity-100",
+                (!isConnected || startingLocalPath === localPath) && "opacity-50 cursor-not-allowed"
+              )}
+              disabled={!isConnected || startingLocalPath === localPath}
+              onClick={(event) => {
+                event.stopPropagation()
+                onNewLocalChat(localPath)
+              }}
+            >
+              {startingLocalPath === localPath ? (
+                <Loader2 className="size-4 text-slate-500 dark:text-slate-400 animate-spin" />
+              ) : (
+                <SquarePen className="size-3.5 text-slate-500 dark:text-slate-400" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={4}>
+            {!isConnected ? `Start ${APP_NAME} to connect` : "New chat"}
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  )
+
   return (
     <div
       ref={setNodeRef}
@@ -97,69 +161,11 @@ function SortableProjectGroup({
       )}
       {...attributes}
     >
-      <div
-        ref={setActivatorNodeRef}
-        className={cn(
-          "sticky top-0 bg-background dark:bg-card z-10 relative pl-2.5 pr-3 py-2 pt-3 flex items-center justify-between",
-          "cursor-grab active:cursor-grabbing",
-          isDragging && "cursor-grabbing"
-        )}
-        onClick={() => onToggleSection(groupKey)}
-        {...listeners}
-      >
-        <div className="flex items-center gap-2">
-          {collapsedSections.has(groupKey) ? <Folder className="translate-y-[1px] size-3.5 shrink-0 text-slate-400 dark:text-slate-500" /> : <FolderOpen className="translate-y-[1px] size-3.5 shrink-0 text-slate-400 dark:text-slate-500" />}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="truncate max-w-[150px] whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">
-                {getPathBasename(localPath)}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={4}>
-              {localPath}
-            </TooltipContent>
-          </Tooltip>
-          <ChevronRight
-            className={cn(
-              "size-3.5 translate-y-[1px] text-slate-400 transition-all duration-200 cursor-pointer",
-              collapsedSections.has(groupKey) ? "opacity-100" : "rotate-90 opacity-0 group-hover/section:opacity-100"
-            )}
-          />
-        </div>
-        {onRemoveProject ? (
-          <ProjectSectionMenu
-            onRemove={() => onRemoveProject(groupKey)}
-          />
-        ) : null}
-        {onNewLocalChat && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "h-5.5 w-5.5 absolute right-0 !rounded opacity-100 md:opacity-0 md:group-hover/section:opacity-100",
-                  (!isConnected || startingLocalPath === localPath) && "opacity-50 cursor-not-allowed"
-                )}
-                disabled={!isConnected || startingLocalPath === localPath}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onNewLocalChat(localPath)
-                }}
-              >
-                {startingLocalPath === localPath ? (
-                  <Loader2 className="size-4 text-slate-500 dark:text-slate-400 animate-spin" />
-                ) : (
-                  <SquarePen className="size-3.5 text-slate-500 dark:text-slate-400" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={4}>
-              {!isConnected ? `Start ${APP_NAME} to connect` : "New chat"}
-            </TooltipContent>
-          </Tooltip>
-        )}
-      </div>
+      {onRemoveProject ? (
+        <ProjectSectionMenu onRemove={() => onRemoveProject(groupKey)}>
+          {header}
+        </ProjectSectionMenu>
+      ) : header}
 
       {!collapsedSections.has(groupKey) && (
         <div className="space-y-[2px] mb-2 ">

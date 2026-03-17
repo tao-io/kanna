@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
-import { PROVIDERS, type AgentProvider, type ModelOptions, type ProviderCatalogEntry } from "../../shared/types"
+import { PROVIDERS, type AgentProvider, type AskUserQuestionAnswerMap, type ModelOptions, type ProviderCatalogEntry } from "../../shared/types"
 import { useChatPreferencesStore } from "../stores/chatPreferencesStore"
 import type { ChatSnapshot, LocalProjectsSnapshot, SidebarChatRow, SidebarData } from "../../shared/types"
 import type { AskUserQuestionItem } from "../components/messages/types"
@@ -23,6 +23,7 @@ function useKannaSocket() {
 
   useEffect(() => {
     const socket = socketRef.current
+    socket?.start()
     return () => {
       socket?.dispose()
     }
@@ -73,7 +74,7 @@ export interface KannaState {
   handleAskUserQuestion: (
     toolUseId: string,
     questions: AskUserQuestionItem[],
-    answers: Record<string, string>
+    answers: AskUserQuestionAnswerMap
   ) => Promise<void>
   handleExitPlanMode: (
     toolUseId: string,
@@ -400,7 +401,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   async function handleAskUserQuestion(
     toolUseId: string,
     questions: AskUserQuestionItem[],
-    answers: Record<string, string>
+    answers: AskUserQuestionAnswerMap
   ) {
     if (!activeChatId) return
     try {

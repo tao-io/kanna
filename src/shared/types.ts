@@ -194,6 +194,8 @@ export interface AskUserQuestionItem {
   multiSelect?: boolean
 }
 
+export type AskUserQuestionAnswerMap = Record<string, string[]>
+
 export interface TodoItem {
   content: string
   status: "pending" | "in_progress" | "completed"
@@ -373,13 +375,15 @@ export interface HydratedToolCallBase<TKind extends string, TInput, TResult> {
 }
 
 export interface AskUserQuestionToolResult {
-  answers: Record<string, string>
+  answers: AskUserQuestionAnswerMap
+  discarded?: boolean
 }
 
 export interface ExitPlanModeToolResult {
   confirmed?: boolean
   clearContext?: boolean
   message?: string
+  discarded?: boolean
 }
 
 export type HydratedAskUserQuestionToolCall =

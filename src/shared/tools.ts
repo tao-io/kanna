@@ -1,5 +1,6 @@
 import type {
   AskUserQuestionItem,
+  AskUserQuestionAnswerMap,
   AskUserQuestionToolResult,
   ExitPlanModeToolResult,
   HydratedToolCall,
@@ -209,7 +210,23 @@ export function hydrateToolResult(tool: NormalizedToolCall, raw: unknown): Hydra
     case "ask_user_question": {
       const record = asRecord(parsed)
       const answers = asRecord(record?.answers) ?? (record ? record : {})
-      return { answers: Object.fromEntries(Object.entries(answers).map(([key, value]) => [key, String(value)])) } satisfies AskUserQuestionToolResult
+      return {
+        answers: Object.fromEntries(
+          Object.entries(answers).map(([key, value]) => {
+            if (Array.isArray(value)) {
+              return [key, value.map((entry) => String(entry))]
+            }
+            if (value && typeof value === "object" && Array.isArray((value as { answers?: unknown }).answers)) {
+              return [key, (value as { answers: unknown[] }).answers.map((entry) => String(entry))]
+            }
+            if (value == null || value === "") {
+              return [key, []]
+            }
+            return [key, [String(value)]]
+          })
+        ) as AskUserQuestionAnswerMap,
+        ...(record?.discarded === true ? { discarded: true } : {}),
+      } satisfies AskUserQuestionToolResult
     }
     case "exit_plan_mode": {
       const record = asRecord(parsed)
@@ -217,6 +234,7 @@ export function hydrateToolResult(tool: NormalizedToolCall, raw: unknown): Hydra
         confirmed: typeof record?.confirmed === "boolean" ? record.confirmed : undefined,
         clearContext: typeof record?.clearContext === "boolean" ? record.clearContext : undefined,
         message: typeof record?.message === "string" ? record.message : undefined,
+        ...(record?.discarded === true ? { discarded: true } : {}),
       } satisfies ExitPlanModeToolResult
     }
     case "read_file":

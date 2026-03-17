@@ -62,7 +62,18 @@ describe("hydrateToolResult", () => {
     })
 
     const result = hydrateToolResult(tool, JSON.stringify({ answers: { runtime: "codex" } }))
-    expect(result).toEqual({ answers: { runtime: "codex" } })
+    expect(result).toEqual({ answers: { runtime: ["codex"] } })
+  })
+
+  test("hydrates AskUserQuestion multi-select answers", () => {
+    const tool = normalizeToolCall({
+      toolName: "AskUserQuestion",
+      toolId: "tool-1",
+      input: { questions: [] },
+    })
+
+    const result = hydrateToolResult(tool, JSON.stringify({ answers: { runtime: ["bun", "node"] } }))
+    expect(result).toEqual({ answers: { runtime: ["bun", "node"] } })
   })
 
   test("hydrates ExitPlanMode decisions", () => {

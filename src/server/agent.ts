@@ -88,6 +88,21 @@ function stringFromUnknown(value: unknown) {
   }
 }
 
+function discardedToolResult(
+  tool: NormalizedToolCall & { toolKind: "ask_user_question" | "exit_plan_mode" }
+) {
+  if (tool.toolKind === "ask_user_question") {
+    return {
+      discarded: true,
+      answers: {},
+    }
+  }
+
+  return {
+    discarded: true,
+  }
+}
+
 export function normalizeClaudeStreamMessage(message: any): TranscriptEntry[] {
   const debugRaw = JSON.stringify(message)
   const messageId = typeof message.uuid === "string" ? message.uuid : undefined
@@ -613,7 +628,24 @@ export class AgentCoordinator {
     if (!active) return
 
     active.cancelRequested = true
+
+    const pendingTool = active.pendingTool
     active.pendingTool = null
+
+    if (pendingTool) {
+      const result = discardedToolResult(pendingTool.tool)
+      await this.store.appendMessage(
+        chatId,
+        timestamped({
+          kind: "tool_result",
+          toolId: pendingTool.toolUseId,
+          content: result,
+        })
+      )
+      if (active.provider === "codex" && pendingTool.tool.toolKind === "exit_plan_mode") {
+        pendingTool.resolve(result)
+      }
+    }
 
     await this.store.appendMessage(chatId, timestamped({ kind: "interrupted" }))
     await this.store.recordTurnCancelled(chatId)

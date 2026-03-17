@@ -8,10 +8,12 @@ import { createWsRouter, type ClientState } from "./ws-router"
 
 export interface StartKannaServerOptions {
   port?: number
+  strictPort?: boolean
 }
 
 export async function startKannaServer(options: StartKannaServerOptions = {}) {
   const port = options.port ?? 3210
+  const strictPort = options.strictPort ?? false
   const store = new EventStore()
   const machineDisplayName = getMachineDisplayName()
   await store.initialize()
@@ -83,7 +85,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     } catch (err: unknown) {
       const isAddrInUse =
         err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EADDRINUSE"
-      if (!isAddrInUse || attempt === MAX_PORT_ATTEMPTS - 1) {
+      if (!isAddrInUse || strictPort || attempt === MAX_PORT_ATTEMPTS - 1) {
         throw err
       }
       console.log(`Port ${actualPort} is in use, trying ${actualPort + 1}...`)

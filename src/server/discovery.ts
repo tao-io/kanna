@@ -4,8 +4,6 @@ import path from "node:path"
 import type { AgentProvider } from "../shared/types"
 import { resolveLocalPath } from "./paths"
 
-const LOG_PREFIX = "[kanna discovery]"
-
 export interface DiscoveredProject {
   localPath: string
   title: string
@@ -91,23 +89,18 @@ export class ClaudeProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
   scan(homeDir: string = homedir()): ProviderDiscoveredProject[] {
     const projectsDir = path.join(homeDir, ".claude", "projects")
     if (!existsSync(projectsDir)) {
-      console.log(`${LOG_PREFIX} provider=claude status=missing root=${projectsDir}`)
       return []
     }
 
     const entries = readdirSync(projectsDir, { withFileTypes: true })
     const projects: ProviderDiscoveredProject[] = []
-    let directoryEntries = 0
-    let skippedMissing = 0
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      directoryEntries += 1
 
       const resolvedPath = resolveEncodedClaudePath(entry.name)
       const normalizedPath = normalizeExistingDirectory(resolvedPath)
       if (!normalizedPath) {
-        skippedMissing += 1
         continue
       }
 
@@ -124,10 +117,6 @@ export class ClaudeProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
       provider: this.provider,
       ...project,
     }))
-
-    console.log(
-      `${LOG_PREFIX} provider=claude scanned=${directoryEntries} valid=${projects.length} deduped=${mergedProjects.length} skipped_missing=${skippedMissing} samples=${mergedProjects.slice(0, 5).map((project) => project.localPath).join(", ") || "-"}`
-    )
 
     return mergedProjects
   }
@@ -244,36 +233,19 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
     const metadataById = readCodexSessionMetadata(sessionsDir)
     const configuredProjects = readCodexConfiguredProjects(configPath)
     const projects: ProviderDiscoveredProject[] = []
-    let skippedMissingMeta = 0
-    let skippedRelative = 0
-    let skippedMissingPath = 0
-    let fallbackSessionTimestamps = 0
-    let configProjectsIncluded = 0
-
-    if (!existsSync(indexPath) || !existsSync(sessionsDir) || !existsSync(configPath)) {
-      console.log(
-        `${LOG_PREFIX} provider=codex status=missing index_exists=${existsSync(indexPath)} sessions_exists=${existsSync(sessionsDir)} config_exists=${existsSync(configPath)}`
-      )
-    }
 
     for (const [sessionId, metadata] of metadataById.entries()) {
       const modifiedAt = updatedAtById.get(sessionId) ?? metadata.modifiedAt
       const cwd = metadata.cwd
-      if (!updatedAtById.has(sessionId)) {
-        fallbackSessionTimestamps += 1
-      }
       if (!cwd) {
-        skippedMissingMeta += 1
         continue
       }
       if (!path.isAbsolute(cwd)) {
-        skippedRelative += 1
         continue
       }
 
       const normalizedPath = normalizeExistingDirectory(cwd)
       if (!normalizedPath) {
-        skippedMissingPath += 1
         continue
       }
 
@@ -287,17 +259,14 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
 
     for (const [configuredPath, modifiedAt] of configuredProjects.entries()) {
       if (!path.isAbsolute(configuredPath)) {
-        skippedRelative += 1
         continue
       }
 
       const normalizedPath = normalizeExistingDirectory(configuredPath)
       if (!normalizedPath) {
-        skippedMissingPath += 1
         continue
       }
 
-      configProjectsIncluded += 1
       projects.push({
         provider: this.provider,
         localPath: normalizedPath,
@@ -310,10 +279,6 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
       provider: this.provider,
       ...project,
     }))
-
-    console.log(
-      `${LOG_PREFIX} provider=codex indexed_sessions=${updatedAtById.size} session_meta=${metadataById.size} config_projects=${configuredProjects.size} valid=${projects.length} deduped=${mergedProjects.length} fallback_session_timestamps=${fallbackSessionTimestamps} config_projects_included=${configProjectsIncluded} skipped_missing_meta=${skippedMissingMeta} skipped_relative=${skippedRelative} skipped_missing_path=${skippedMissingPath} samples=${mergedProjects.slice(0, 5).map((project) => project.localPath).join(", ") || "-"}`
-    )
 
     return mergedProjects
   }
@@ -330,10 +295,6 @@ export function discoverProjects(
 ): DiscoveredProject[] {
   const mergedProjects = mergeDiscoveredProjects(
     adapters.flatMap((adapter) => adapter.scan(homeDir).map(({ provider: _provider, ...project }) => project))
-  )
-
-  console.log(
-    `${LOG_PREFIX} aggregate providers=${adapters.map((adapter) => adapter.provider).join(",")} total=${mergedProjects.length} samples=${mergedProjects.slice(0, 10).map((project) => project.localPath).join(", ") || "-"}`
   )
 
   return mergedProjects

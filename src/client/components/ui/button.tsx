@@ -10,7 +10,7 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground disabled:bg-primary/50 disabled:text-primary-foreground/90 hover:bg-primary/90",
         juicy: "bg-logo text-primary-foreground disabled:text-primary-foreground/50 hover:bg-logo/90",
         destructive:
-          "bg-destructive dark:text-background",
+          "bg-destructive/80  dark:text-white",
         outline:
           "border disabled:bg-transparent disabled:text-foreground/50 border-inpu disabled:border-input/90 bg-card hover:bg-muted hover:text-accent-foreground",
         secondary:

@@ -9,6 +9,7 @@ export type ClientCommand =
   | { type: "project.open"; localPath: string }
   | { type: "project.create"; localPath: string; title: string }
   | { type: "project.remove"; projectId: string }
+  | { type: "system.ping" }
   | { type: "system.openExternal"; localPath: string; action: "open_finder" | "open_terminal" | "open_editor" }
   | { type: "chat.create"; projectId: string }
   | { type: "chat.rename"; chatId: string; title: string }

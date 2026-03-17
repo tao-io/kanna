@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Flower, Loader2, Monitor, PanelLeft, X, Menu, Plus } from "lucide-react"
+import { Flower, Loader2, PanelLeft, X, Menu, Plus, Settings } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
-import { NewProjectModal } from "../components/NewProjectModal"
 import { Button } from "../components/ui/button"
 import { cn } from "../lib/utils"
 import { ChatRow } from "../components/chat-ui/sidebar/ChatRow"
@@ -24,7 +23,6 @@ interface KannaSidebarProps {
   onCollapse: () => void
   onExpand: () => void
   onCreateChat: (projectId: string) => void
-  onCreateProject: (project: { mode: "new" | "existing"; localPath: string; title: string }) => void
   onDeleteChat: (chat: SidebarChatRow) => void
   onRemoveProject: (projectId: string) => void
 }
@@ -42,7 +40,6 @@ export function KannaSidebar({
   onCollapse,
   onExpand,
   onCreateChat,
-  onCreateProject,
   onDeleteChat,
   onRemoveProject,
 }: KannaSidebarProps) {
@@ -51,7 +48,7 @@ export function KannaSidebar({
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const chatsPerProject = 10
 
   const savedOrder = useProjectGroupOrderStore((s) => s.order)
@@ -114,10 +111,19 @@ export function KannaSidebar({
       key={chat._id}
       chat={chat}
       activeChatId={activeChatId}
+      nowMs={nowMs}
       onSelectChat={(chatId) => navigate(`/chat/${chatId}`)}
       onDeleteChat={() => onDeleteChat(chat)}
     />
-  ), [activeChatId, navigate, onDeleteChat])
+  ), [activeChatId, navigate, nowMs, onDeleteChat])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now())
+    }, 30_000)
+
+    return () => window.clearInterval(intervalId)
+  }, [])
 
   useEffect(() => {
     if (!activeChatId || !scrollContainerRef.current) return
@@ -143,6 +149,8 @@ export function KannaSidebar({
 
   const hasVisibleChats = activeVisibleCount > 0
   const isLocalProjectsActive = location.pathname === "/projects"
+  const isSettingsActive = location.pathname === "/settings"
+  const isUtilityPageActive = isLocalProjectsActive || isSettingsActive
   const isConnecting = connectionStatus === "connecting" || !ready
   const statusLabel = isConnecting ? "Connecting" : connectionStatus === "connected" ? "Connected" : "Disconnected"
   const statusDotClass = connectionStatus === "connected" ? "bg-emerald-500" : "bg-amber-500"
@@ -160,7 +168,7 @@ export function KannaSidebar({
         </Button>
       )}
 
-      {collapsed && isLocalProjectsActive && (
+      {collapsed && isUtilityPageActive && (
         <div className="hidden md:flex fixed left-0 top-0 h-full z-40 items-start pt-4 pl-5 border-l border-border/0">
           <div className="flex items-center gap-1">
             <Flower className="size-6 text-logo" />
@@ -203,32 +211,13 @@ export function KannaSidebar({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setNewProjectOpen(true)}
+              onClick={() => {
+                navigate("/projects")
+                onClose()
+              }}
               title="New project"
             >
-              {/* <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                className="size-5"
-              >
-                <title>folder-plus</title>
-                <g
-                  fill="currentColor"
-                  strokeLinecap="square"
-                  strokeLinejoin="miter"
-                  strokeMiterlimit={10}
-                >
-                  <path
-                    d="M11 20H4C2.89543 20 2 19.1046 2 18V5C2 3.89543 2.89543 3 4 3H10L13 6H20C21.1046 6 22 6.89543 22 8V10"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    fill="none"
-                  />
-                  <path d="M19 22V14" stroke="currentColor" strokeWidth={2} fill="none" />
-                  <path d="M15 18H23" stroke="currentColor" strokeWidth={2} fill="none" />
-                </g>
-              </svg> */}
-              <Plus className="size-4"></Plus>
+              <Plus className="size-4" />
             </Button>
             <Button
               variant="ghost"
@@ -246,7 +235,7 @@ export function KannaSidebar({
           className="flex-1 min-h-0 overflow-y-auto scrollbar-hide"
           style={{ WebkitOverflowScrolling: "touch" }}
         >
-          <div className="pb-2 px-2 pt-1.5">
+          <div className="p-[7px]">
             {!hasVisibleChats && isConnecting ? (
               <div className="space-y-5 px-1 pt-3">
                 {[0, 1, 2].map((section) => (
@@ -299,20 +288,20 @@ export function KannaSidebar({
           <button
             type="button"
             onClick={() => {
-              navigate("/projects")
+              navigate("/settings")
               onClose()
             }}
             className={cn(
               "w-full rounded-xl rounded-t-md border px-3 py-2 text-left transition-colors",
-              isLocalProjectsActive
+              isSettingsActive
                 ? "bg-muted border-border"
                 : "border-border/0 hover:bg-muted hover:border-border active:bg-muted/80"
             )}
           >
             <div className="flex items- justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Monitor className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">Projects</span>
+                <Settings className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm">Settings</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>{statusLabel}</span>
@@ -326,12 +315,6 @@ export function KannaSidebar({
           </button>
         </div>
       </div>
-
-      <NewProjectModal
-        open={newProjectOpen}
-        onOpenChange={setNewProjectOpen}
-        onConfirm={onCreateProject}
-      />
 
       {open ? <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={onClose} /> : null}
     </>

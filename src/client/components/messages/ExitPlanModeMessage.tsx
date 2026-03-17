@@ -13,7 +13,7 @@ interface Props {
   isLatest: boolean
 }
 
-export function ExitPlanModeMessage({ message, onConfirm }: Props) {
+export function ExitPlanModeMessage({ message, onConfirm, isLatest }: Props) {
   const isComplete = !!message.result
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -36,6 +36,7 @@ export function ExitPlanModeMessage({ message, onConfirm }: Props) {
   }
 
   const result = isComplete ? message.result : null
+  const isDiscarded = result?.discarded === true
 
   return (
     <div className="flex flex-col gap-3">
@@ -88,13 +89,18 @@ export function ExitPlanModeMessage({ message, onConfirm }: Props) {
             className="pl-4 inline text-sm font-medium bg-background text-foreground/60 border border-border py-1.5 px-3 rounded-[20px] leading-relaxed max-w-[85%] sm:max-w-[80%]"
           >
             <em>{
-              result?.clearContext ? "Approved & Cleared Context"
+              isDiscarded ? "Discarded"
+              : result?.clearContext ? "Approved & Cleared Context"
               : result?.confirmed ? "Approved"
               : result?.message ? `Adjusted: "${result.message}"`
               : "Adjusted Plan"
             }</em>
             <CornerDownLeft className="inline h-4 w-4 ml-1.5 -mt-0.5" />
           </span>
+        </div>
+      ) : !isLatest ? (
+        <div className="flex justify-end mx-2">
+          <span className="inline text-sm text-muted-foreground italic">Plan pending (newer prompt active)</span>
         </div>
       ) : (
         <div className="flex flex-col gap-3">

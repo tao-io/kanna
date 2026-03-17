@@ -7,6 +7,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: DEV_CLIENT_PORT,
+    strictPort: true,
     proxy: {
       "/ws": {
         target: `ws://localhost:${DEV_SERVER_PORT}`,

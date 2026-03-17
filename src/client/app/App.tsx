@@ -4,13 +4,14 @@ import { TooltipProvider } from "../components/ui/tooltip"
 import { KannaSidebar } from "./KannaSidebar"
 import { ChatPage } from "./ChatPage"
 import { LocalProjectsPage } from "./LocalProjectsPage"
+import { SettingsPage } from "./SettingsPage"
 import { useKannaState } from "./useKannaState"
 
 function KannaLayout() {
   const location = useLocation()
   const params = useParams()
   const state = useKannaState(params.chatId ?? null)
-  const isLocalProjectsPage = location.pathname === "/projects"
+  const showMobileOpenButton = location.pathname === "/projects" || location.pathname === "/settings"
 
   return (
     <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden">
@@ -21,16 +22,13 @@ function KannaLayout() {
         ready={state.sidebarReady}
         open={state.sidebarOpen}
         collapsed={state.sidebarCollapsed}
-        showMobileOpenButton={isLocalProjectsPage}
+        showMobileOpenButton={showMobileOpenButton}
         onOpen={state.openSidebar}
         onClose={state.closeSidebar}
         onCollapse={state.collapseSidebar}
         onExpand={state.expandSidebar}
         onCreateChat={(projectId) => {
           void state.handleCreateChat(projectId)
-        }}
-        onCreateProject={(project) => {
-          void state.handleCreateProject(project)
         }}
         onDeleteChat={(chat) => {
           void state.handleDeleteChat(chat)
@@ -52,6 +50,7 @@ export function App() {
           <Route element={<KannaLayout />}>
             <Route path="/" element={<ChatPage />} />
             <Route path="/projects" element={<LocalProjectsPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route path="/chat/:chatId" element={<ChatPage />} />
           </Route>
         </Routes>

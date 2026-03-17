@@ -54,13 +54,39 @@ describe("processTranscriptMessages", () => {
       entry({
         kind: "tool_result",
         toolId: "tool-2",
-        content: { answers: { "Provider?": "Codex" } },
+        content: { answers: { "Provider?": ["Codex"] } },
       }),
     ])
 
     expect(messages[0]?.kind).toBe("tool")
     if (messages[0]?.kind !== "tool") throw new Error("unexpected message")
-    expect(messages[0].result).toEqual({ answers: { "Provider?": "Codex" } })
+    expect(messages[0].result).toEqual({ answers: { "Provider?": ["Codex"] } })
+  })
+
+  test("hydrates discarded prompt tool results", () => {
+    const messages = processTranscriptMessages([
+      entry({
+        kind: "tool_call",
+        tool: {
+          kind: "tool",
+          toolKind: "exit_plan_mode",
+          toolName: "ExitPlanMode",
+          toolId: "tool-3",
+          input: {
+            plan: "## Plan",
+          },
+        },
+      }),
+      entry({
+        kind: "tool_result",
+        toolId: "tool-3",
+        content: { discarded: true },
+      }),
+    ])
+
+    expect(messages[0]?.kind).toBe("tool")
+    if (messages[0]?.kind !== "tool") throw new Error("unexpected message")
+    expect(messages[0].result).toEqual({ discarded: true })
   })
 
   test("preserves structured Claude ask-user-question results when a later echoed tool result arrives", () => {
@@ -80,7 +106,7 @@ describe("processTranscriptMessages", () => {
       entry({
         kind: "tool_result",
         toolId: "tool-3",
-        content: { answers: { "Provider?": "Codex" } },
+        content: { answers: { "Provider?": ["Codex"] } },
       }),
       entry({
         kind: "tool_result",
@@ -98,7 +124,7 @@ describe("processTranscriptMessages", () => {
 
     expect(messages[0]?.kind).toBe("tool")
     if (messages[0]?.kind !== "tool") throw new Error("unexpected message")
-    expect(messages[0].result).toEqual({ answers: { "Provider?": "Codex" } })
+    expect(messages[0].result).toEqual({ answers: { "Provider?": ["Codex"] } })
   })
 })
 
@@ -135,6 +161,51 @@ describe("getLatestToolIds", () => {
       AskUserQuestion: messages[0]?.kind === "tool" ? messages[0].id : null,
       ExitPlanMode: null,
       TodoWrite: messages[1]?.kind === "tool" ? messages[1].id : null,
+    })
+  })
+
+  test("ignores discarded special tools when choosing the latest active id", () => {
+    const messages = processTranscriptMessages([
+      entry({
+        kind: "tool_call",
+        tool: {
+          kind: "tool",
+          toolKind: "ask_user_question",
+          toolName: "AskUserQuestion",
+          toolId: "tool-1",
+          input: {
+            questions: [{ question: "Provider?" }],
+          },
+        },
+      }),
+      entry({
+        kind: "tool_result",
+        toolId: "tool-1",
+        content: { discarded: true, answers: {} },
+      }),
+      entry({
+        kind: "tool_call",
+        tool: {
+          kind: "tool",
+          toolKind: "exit_plan_mode",
+          toolName: "ExitPlanMode",
+          toolId: "tool-2",
+          input: {
+            plan: "## Plan",
+          },
+        },
+      }),
+      entry({
+        kind: "tool_result",
+        toolId: "tool-2",
+        content: { discarded: true },
+      }),
+    ])
+
+    expect(getLatestToolIds(messages)).toEqual({
+      AskUserQuestion: null,
+      ExitPlanMode: null,
+      TodoWrite: null,
     })
   })
 })

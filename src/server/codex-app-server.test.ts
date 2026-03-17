@@ -1186,6 +1186,104 @@ describe("CodexAppServerManager", () => {
     })
   })
 
+  test("infers multi-select Codex questions from prompt text and returns multiple answers", async () => {
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "thread/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { thread: { id: "thread-1" }, model: "gpt-5.4", reasoningEffort: "high" },
+        })
+      } else if (message.method === "turn/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { turn: { id: "turn-1", status: "inProgress", error: null } },
+        })
+        child.writeServerMessage({
+          id: "req-1",
+          method: "item/tool/requestUserInput",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            itemId: "ask-1",
+            questions: [
+              {
+                id: "runtimes",
+                header: "Runtime",
+                question: "Select all runtimes that apply",
+                isOther: true,
+                isSecret: false,
+                options: [
+                  { label: "bun", description: null },
+                  { label: "node", description: null },
+                ],
+              },
+            ],
+          },
+        })
+        child.writeServerMessage({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: { id: "turn-1", status: "completed", error: null },
+          },
+        })
+      }
+    })
+
+    const manager = new CodexAppServerManager({
+      spawnProcess: () => process as never,
+    })
+
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      model: "gpt-5.4",
+      sessionToken: null,
+    })
+
+    const turn = await manager.startTurn({
+      chatId: "chat-1",
+      model: "gpt-5.4",
+      content: "ask me",
+      planMode: false,
+      onToolRequest: async ({ tool }) => {
+        expect(tool.toolKind).toBe("ask_user_question")
+        if (tool.toolKind !== "ask_user_question") {
+          return {}
+        }
+
+        expect(tool.input.questions[0]?.multiSelect).toBe(true)
+
+        return {
+          questions: [{
+            id: "runtimes",
+            question: "Select all runtimes that apply",
+            multiSelect: true,
+          }],
+          answers: {
+            runtimes: ["bun", "node"],
+          },
+        }
+      },
+    })
+
+    await collectStream(turn.stream)
+
+    const response = process.messages.find((message: any) => message.id === "req-1")
+    expect(response).toEqual({
+      id: "req-1",
+      result: {
+        answers: {
+          runtimes: {
+            answers: ["bun", "node"],
+          },
+        },
+      },
+    })
+  })
+
   test("sends approval decisions back to the app-server", async () => {
     const process = new FakeCodexProcess((message, child) => {
       if (message.method === "initialize") {
@@ -1305,6 +1403,94 @@ describe("CodexAppServerManager", () => {
         turnId: "turn-1",
       },
     })
+  })
+
+  test("interrupt clears a pending exit-plan wait so a new turn can start immediately", async () => {
+    let resolveToolRequest!: (value: unknown) => void
+
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "thread/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { thread: { id: "thread-1" }, model: "gpt-5.4", reasoningEffort: "high" },
+        })
+      } else if (message.method === "turn/start") {
+        if (message.params.input[0]?.text === "make a plan") {
+          child.writeServerMessage({
+            id: message.id,
+            result: { turn: { id: "turn-plan", status: "completed", error: null } },
+          })
+          child.writeServerMessage({
+            method: "turn/plan/updated",
+            params: {
+              threadId: "thread-1",
+              turnId: "turn-plan",
+              explanation: "Plan the work",
+              plan: [{ step: "Inspect repo", status: "completed" }],
+            },
+          })
+          child.writeServerMessage({
+            method: "turn/completed",
+            params: {
+              threadId: "thread-1",
+              turn: { id: "turn-plan", status: "completed", error: null },
+            },
+          })
+        } else {
+          child.writeServerMessage({
+            id: message.id,
+            result: { turn: { id: "turn-next", status: "completed", error: null } },
+          })
+          child.writeServerMessage({
+            method: "turn/completed",
+            params: {
+              threadId: "thread-1",
+              turn: { id: "turn-next", status: "completed", error: null },
+            },
+          })
+        }
+      }
+    })
+
+    const manager = new CodexAppServerManager({
+      spawnProcess: () => process as never,
+    })
+
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      model: "gpt-5.4",
+      sessionToken: null,
+    })
+
+    const turn = await manager.startTurn({
+      chatId: "chat-1",
+      model: "gpt-5.4",
+      content: "make a plan",
+      planMode: true,
+      onToolRequest: async () => await new Promise((resolve) => {
+        resolveToolRequest = resolve
+      }),
+    })
+
+    const iterator = turn.stream[Symbol.asyncIterator]()
+    await iterator.next()
+    await iterator.next()
+    await iterator.next()
+    await turn.interrupt()
+
+    const nextTurn = await manager.startTurn({
+      chatId: "chat-1",
+      model: "gpt-5.4",
+      content: "continue",
+      planMode: false,
+      onToolRequest: async () => ({}),
+    })
+
+    await collectStream(nextTurn.stream)
+    resolveToolRequest({})
   })
 
   test("emits an error result when the app-server exits mid-turn", async () => {

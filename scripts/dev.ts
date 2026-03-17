@@ -21,8 +21,8 @@ function spawnLabeledProcess(label: string, args: string[]) {
   return child
 }
 
-const client = spawnLabeledProcess("client", ["x", "vite", "--host", "0.0.0.0", "--port", String(DEV_CLIENT_PORT)])
-const server = spawnLabeledProcess("server", ["run", "./src/server/cli.ts", "--no-open", "--port", String(DEV_SERVER_PORT), ...forwardedArgs])
+const client = spawnLabeledProcess("client", ["x", "vite", "--host", "0.0.0.0", "--port", String(DEV_CLIENT_PORT), "--strictPort"])
+const server = spawnLabeledProcess("server", ["run", "./src/server/cli.ts", "--no-open", "--port", String(DEV_SERVER_PORT), "--strict-port", ...forwardedArgs])
 
 const children = [client, server]
 let shuttingDown = false

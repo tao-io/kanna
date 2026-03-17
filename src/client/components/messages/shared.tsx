@@ -137,13 +137,13 @@ export function MetaCodeBlock({ label, children, copyText }: { label: ReactNode;
           variant="ghost"
           size="icon"
           className={cn(
-            "absolute top-2.5 right-1.5 z-10 h-8 w-8 rounded-md text-muted-foreground opacity-0 group-hover/codeblock:opacity-100 transition-opacity",
+            "absolute top-[4px] right-[4px] z-10 h-6.5 w-6.5 rounded-sm text-muted-foreground opacity-0 group-hover/codeblock:opacity-100 transition-opacity",
             !copied && "hover:text-foreground",
             copied && "hover:!bg-transparent hover:!border-transparent"
           )}
           onClick={handleCopy}
         >
-          {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
+          {copied ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Copy className="h-4 w-4" />}
         </Button>
       </div>
     </div>

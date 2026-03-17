@@ -1,6 +1,6 @@
 import React, { useMemo } from "react"
 import type { AskUserQuestionItem, ProcessedToolCall } from "../components/messages/types"
-import type { HydratedTranscriptMessage } from "../../shared/types"
+import type { AskUserQuestionAnswerMap, HydratedTranscriptMessage } from "../../shared/types"
 import { UserMessage } from "../components/messages/UserMessage"
 import { RawJsonMessage } from "../components/messages/RawJsonMessage"
 import { SystemMessage } from "../components/messages/SystemMessage"
@@ -66,7 +66,7 @@ interface KannaTranscriptProps {
   onAskUserQuestionSubmit: (
     toolUseId: string,
     questions: AskUserQuestionItem[],
-    answers: Record<string, string>
+    answers: AskUserQuestionAnswerMap
   ) => void
   onExitPlanModeConfirm: (toolUseId: string, confirmed: boolean, clearContext?: boolean, message?: string) => void
 }

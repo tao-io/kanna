@@ -30,6 +30,7 @@ import {
   type ThreadStartParams,
   type ThreadStartResponse,
   type ToolRequestUserInputParams,
+  type ToolRequestUserInputQuestion,
   type ToolRequestUserInputResponse,
   type TurnPlanStep,
   type TurnPlanUpdatedNotification,
@@ -174,6 +175,13 @@ function isRecoverableResumeError(error: unknown): boolean {
   )
 }
 
+const MULTI_SELECT_HINT_PATTERN = /\b(all that apply|select all|choose all|pick all|select multiple|choose multiple|pick multiple|multiple selections?|multiple choice|more than one|one or more)\b/i
+
+function inferQuestionAllowsMultiple(question: ToolRequestUserInputQuestion): boolean {
+  const combinedText = [question.header, question.question].filter(Boolean).join(" ")
+  return MULTI_SELECT_HINT_PATTERN.test(combinedText)
+}
+
 function toAskUserQuestionItems(params: ToolRequestUserInputParams): AskUserQuestionItem[] {
   return params.questions.map((question) => ({
     id: question.id,
@@ -183,7 +191,7 @@ function toAskUserQuestionItems(params: ToolRequestUserInputParams): AskUserQues
       label: option.label,
       description: option.description ?? undefined,
     })),
-    multiSelect: false,
+    multiSelect: inferQuestionAllowsMultiple(question),
   }))
 }
 
@@ -782,7 +790,14 @@ export class CodexAppServerManager {
       stream: queue,
       interrupt: async () => {
         const pendingTurn = context.pendingTurn
-        if (!pendingTurn?.turnId || !context.sessionToken) return
+        if (!pendingTurn) return
+
+        context.pendingTurn = null
+        pendingTurn.resolved = true
+        pendingTurn.queue.finish()
+
+        if (!pendingTurn.turnId || !context.sessionToken) return
+
         await this.sendRequest(context, "turn/interrupt", {
           threadId: context.sessionToken,
           turnId: pendingTurn.turnId,

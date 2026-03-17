@@ -4,7 +4,7 @@ import { MetaRow, MetaLabel, MetaCodeBlock, ExpandableRow, VerticalLineContainer
 import { useMemo } from "react"
 import { stripWorkspacePath } from "../../lib/pathUtils"
 import { AnimatedShinyText } from "../ui/animated-shiny-text"
-import { toTitleCase } from "../../lib/formatters"
+import { formatBashCommandTitle, toTitleCase } from "../../lib/formatters"
 import { FileContentView } from "./FileContentView"
 
 interface Props {
@@ -36,7 +36,7 @@ export function ToolCallMessage({ message, isLoading = false, localPath }: Props
       return `Find \`${pattern}\` in files`
     }
     if (message.toolKind === "bash") {
-      return message.input.description || message.input.command || "Bash"
+      return message.input.description || (message.input.command ? formatBashCommandTitle(message.input.command) : "Bash")
     }
     if (message.toolKind === "web_search") {
       return message.input.query || "Web Search"

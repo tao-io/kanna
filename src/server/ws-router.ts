@@ -89,6 +89,10 @@ export function createWsRouter({
     const { command, id } = message
     try {
       switch (command.type) {
+        case "system.ping": {
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
+          return
+        }
         case "project.open": {
           await ensureProjectDirectory(command.localPath)
           const project = await store.openProject(command.localPath)

@@ -5,6 +5,10 @@ type SnapshotListener<T> = (value: T) => void
 export type SocketStatus = "connecting" | "connected" | "disconnected"
 type StatusListener = (status: SocketStatus) => void
 
+const STALE_CONNECTION_MS = 25_000
+const HEARTBEAT_INTERVAL_MS = 15_000
+const PING_TIMEOUT_MS = 4_000
+
 interface SubscriptionEntry<T> {
   topic: SubscriptionTopic
   listener: SnapshotListener<T>
@@ -13,23 +17,60 @@ interface SubscriptionEntry<T> {
 export class KannaSocket {
   private readonly url: string
   private ws: WebSocket | null = null
+  private started = false
   private reconnectTimer: number | null = null
   private reconnectDelayMs = 750
   private readonly subscriptions = new Map<string, SubscriptionEntry<unknown>>()
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }>()
   private readonly outboundQueue: ClientEnvelope[] = []
   private readonly statusListeners = new Set<StatusListener>()
+  private heartbeatTimer: number | null = null
+  private pingTimeoutTimer: number | null = null
+  private pingPromise: Promise<void> | null = null
+  private lastOpenAt = 0
+  private lastMessageAt = 0
+  private reconnectImmediatelyOnClose = false
+  private readonly handleWindowFocus = () => {
+    void this.ensureHealthyConnection()
+  }
+  private readonly handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      this.startHeartbeat()
+      void this.ensureHealthyConnection()
+      return
+    }
+    this.stopHeartbeat()
+  }
+  private readonly handleOnline = () => {
+    void this.ensureHealthyConnection()
+  }
 
   constructor(url: string) {
     this.url = url
+  }
+
+  start() {
+    if (this.started) {
+      return
+    }
+    this.started = true
+    window.addEventListener("focus", this.handleWindowFocus)
+    window.addEventListener("online", this.handleOnline)
+    document.addEventListener("visibilitychange", this.handleVisibilityChange)
     this.connect()
   }
 
   dispose() {
+    this.started = false
     if (this.reconnectTimer) {
       window.clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+    this.stopHeartbeat()
+    this.clearPingState()
+    window.removeEventListener("focus", this.handleWindowFocus)
+    window.removeEventListener("online", this.handleOnline)
+    document.removeEventListener("visibilitychange", this.handleVisibilityChange)
     this.ws?.close()
     this.ws = null
     for (const pending of this.pending.values()) {
@@ -65,13 +106,37 @@ export class KannaSocket {
     })
   }
 
+  ensureHealthyConnection() {
+    if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
+      this.reconnectNow()
+      return Promise.resolve()
+    }
+
+    if (this.ws.readyState === WebSocket.CONNECTING) {
+      return Promise.resolve()
+    }
+
+    if (!this.isConnectionStale()) {
+      return Promise.resolve()
+    }
+
+    return this.sendPing()
+  }
+
   private connect() {
+    if (!this.started) {
+      return
+    }
     this.emitStatus("connecting")
     this.ws = new WebSocket(this.url)
 
     this.ws.addEventListener("open", () => {
       this.reconnectDelayMs = 750
+      this.reconnectImmediatelyOnClose = false
+      this.lastOpenAt = Date.now()
+      this.lastMessageAt = this.lastOpenAt
       this.emitStatus("connected")
+      this.startHeartbeat()
       for (const [id, subscription] of this.subscriptions.entries()) {
         this.sendNow({ v: 1, type: "subscribe", id, topic: subscription.topic })
       }
@@ -84,6 +149,7 @@ export class KannaSocket {
     })
 
     this.ws.addEventListener("message", (event) => {
+      this.lastMessageAt = Date.now()
       let payload: ServerEnvelope
       try {
         payload = JSON.parse(String(event.data)) as ServerEnvelope
@@ -118,11 +184,22 @@ export class KannaSocket {
     })
 
     this.ws.addEventListener("close", () => {
+      if (!this.started) {
+        return
+      }
+      const reconnectImmediately = this.reconnectImmediatelyOnClose
+      this.reconnectImmediatelyOnClose = false
+      this.stopHeartbeat()
+      this.clearPingState()
       this.emitStatus("disconnected")
       for (const pending of this.pending.values()) {
         pending.reject(new Error("Disconnected"))
       }
       this.pending.clear()
+      if (reconnectImmediately) {
+        this.connect()
+        return
+      }
       this.scheduleReconnect()
     })
   }
@@ -150,6 +227,90 @@ export class KannaSocket {
     for (const listener of this.statusListeners) {
       listener(status)
     }
+  }
+
+  private isConnectionStale() {
+    const baseline = Math.max(this.lastMessageAt, this.lastOpenAt)
+    return baseline > 0 && Date.now() - baseline >= STALE_CONNECTION_MS
+  }
+
+  private sendPing() {
+    if (this.pingPromise) {
+      return this.pingPromise
+    }
+
+    const pingPromise = this.command({ type: "system.ping" })
+      .then(() => {
+        this.clearPingState()
+      })
+      .catch((error) => {
+        this.clearPingState()
+        this.reconnectNow()
+        throw error
+      })
+
+    this.pingTimeoutTimer = window.setTimeout(() => {
+      this.clearPingState()
+      this.reconnectNow()
+    }, PING_TIMEOUT_MS)
+
+    this.pingPromise = pingPromise
+    return pingPromise
+  }
+
+  private reconnectNow() {
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+
+    if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+      this.connect()
+      return
+    }
+
+    if (this.ws.readyState === WebSocket.CONNECTING) {
+      return
+    }
+
+    this.reconnectImmediatelyOnClose = true
+    this.ws.close()
+  }
+
+  private startHeartbeat() {
+    if (document.visibilityState !== "visible") {
+      return
+    }
+
+    if (this.heartbeatTimer !== null) {
+      return
+    }
+
+    this.heartbeatTimer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        this.stopHeartbeat()
+        return
+      }
+      if (this.ws?.readyState !== WebSocket.OPEN) {
+        return
+      }
+      void this.ensureHealthyConnection()
+    }, HEARTBEAT_INTERVAL_MS)
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer !== null) {
+      window.clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+  }
+
+  private clearPingState() {
+    if (this.pingTimeoutTimer !== null) {
+      window.clearTimeout(this.pingTimeoutTimer)
+      this.pingTimeoutTimer = null
+    }
+    this.pingPromise = null
   }
 
   private enqueue(envelope: ClientEnvelope) {

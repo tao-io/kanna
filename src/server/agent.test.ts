@@ -481,6 +481,176 @@ describe("AgentCoordinator codex integration", () => {
     expect(store.messages.some((entry) => entry.kind === "context_cleared")).toBe(true)
     expect(store.chat.sessionToken).toBe("thread-2")
   })
+
+  test("cancelling a waiting ask-user-question records a discarded tool result", async () => {
+    let releaseInterrupt!: () => void
+    const interrupted = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve
+    })
+
+    const fakeCodexManager = {
+      async startSession() {},
+      async startTurn(args: {
+        onToolRequest: (request: any) => Promise<unknown>
+      }): Promise<HarnessTurn> {
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "system_init",
+              provider: "codex",
+              model: "gpt-5.4",
+              tools: [],
+              agents: [],
+              slashCommands: [],
+              mcpServers: [],
+            }),
+          }
+          void args.onToolRequest({
+            tool: {
+              kind: "tool",
+              toolKind: "ask_user_question",
+              toolName: "AskUserQuestion",
+              toolId: "question-1",
+              input: {
+                questions: [{ question: "Provider?" }],
+              },
+            },
+          })
+          await interrupted
+        }
+
+        return {
+          provider: "codex",
+          stream: stream(),
+          interrupt: async () => {
+            releaseInterrupt()
+          },
+          close: () => {},
+        }
+      },
+    }
+
+    const store = createFakeStore()
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "codex",
+      content: "ask me something",
+    })
+
+    await waitFor(() => coordinator.getPendingTool("chat-1")?.toolKind === "ask_user_question")
+    await coordinator.cancel("chat-1")
+
+    const discardedResult = store.messages.find((entry) => entry.kind === "tool_result" && entry.toolId === "question-1")
+    expect(discardedResult).toBeDefined()
+    if (!discardedResult || discardedResult.kind !== "tool_result") {
+      throw new Error("missing discarded ask-user-question result")
+    }
+    expect(discardedResult.content).toEqual({ discarded: true, answers: {} })
+    expect(store.messages.some((entry) => entry.kind === "interrupted")).toBe(true)
+  })
+
+  test("cancelling a waiting codex exit-plan prompt discards it without starting a follow-up turn", async () => {
+    let releaseInterrupt!: () => void
+    const interrupted = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve
+    })
+    const startTurnCalls: string[] = []
+
+    const fakeCodexManager = {
+      async startSession() {},
+      async startTurn(args: {
+        content: string
+        onToolRequest: (request: any) => Promise<unknown>
+      }): Promise<HarnessTurn> {
+        startTurnCalls.push(args.content)
+
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "system_init",
+              provider: "codex",
+              model: "gpt-5.4",
+              tools: [],
+              agents: [],
+              slashCommands: [],
+              mcpServers: [],
+            }),
+          }
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "tool_call",
+              tool: {
+                kind: "tool",
+                toolKind: "exit_plan_mode",
+                toolName: "ExitPlanMode",
+                toolId: "exit-1",
+                input: {
+                  plan: "## Plan",
+                },
+              },
+            }),
+          }
+          await args.onToolRequest({
+            tool: {
+              kind: "tool",
+              toolKind: "exit_plan_mode",
+              toolName: "ExitPlanMode",
+              toolId: "exit-1",
+              input: {
+                plan: "## Plan",
+              },
+            },
+          })
+          await interrupted
+        }
+
+        return {
+          provider: "codex",
+          stream: stream(),
+          interrupt: async () => {
+            releaseInterrupt()
+          },
+          close: () => {},
+        }
+      },
+    }
+
+    const store = createFakeStore()
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "codex",
+      content: "plan this",
+      planMode: true,
+    })
+
+    await waitFor(() => coordinator.getPendingTool("chat-1")?.toolKind === "exit_plan_mode")
+    await coordinator.cancel("chat-1")
+
+    const discardedResult = store.messages.find((entry) => entry.kind === "tool_result" && entry.toolId === "exit-1")
+    expect(discardedResult).toBeDefined()
+    if (!discardedResult || discardedResult.kind !== "tool_result") {
+      throw new Error("missing discarded exit-plan result")
+    }
+    expect(discardedResult.content).toEqual({ discarded: true })
+    expect(startTurnCalls).toEqual(["plan this"])
+  })
 })
 
 function createFakeStore() {

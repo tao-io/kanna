@@ -29,7 +29,7 @@ function PopoverMenuItem({
   selected: boolean
   icon: React.ReactNode
   label: string
-  description: string
+  description?: string
   disabled?: boolean
 }) {
   return (
@@ -45,7 +45,7 @@ function PopoverMenuItem({
       {icon}
       <div>
         <div className="text-sm font-medium">{label}</div>
-        <div className="text-xs text-muted-foreground">{description}</div>
+        {description ? <div className="text-xs text-muted-foreground">{description}</div> : null}
       </div>
     </button>
   )
@@ -322,7 +322,6 @@ export const ChatInput = memo(function ChatInput({
                 selected={selectedProvider === provider.id}
                 icon={<Icon className="h-4 w-4 text-muted-foreground" />}
                 label={provider.label}
-                description={provider.supportsPlanMode ? "Plan mode available" : "Fast local JSONL exec flow"}
               />
             )
           })}
@@ -345,7 +344,6 @@ export const ChatInput = memo(function ChatInput({
                 selected={providerPrefs.model === model.id}
                 icon={<Icon className="h-4 w-4 text-muted-foreground" />}
                 label={model.label}
-                description={selectedProvider === "claude" ? "Claude model" : "Codex model"}
               />
             )
           })}
@@ -366,11 +364,6 @@ export const ChatInput = memo(function ChatInput({
               selected={selectedReasoningEffort === effort.id}
               icon={<Gauge className="h-4 w-4 text-muted-foreground" />}
               label={effort.label}
-              description={
-                selectedProvider === "claude"
-                  ? (effort.id === "max" ? "Maximum effort, deepest reasoning" : `${effort.label} reasoning effort`)
-                  : `${effort.label} reasoning effort`
-              }
               disabled={selectedProvider === "claude" && effort.id === "max" && providerPrefs.model !== "opus"}
             />
           ))}
@@ -380,7 +373,7 @@ export const ChatInput = memo(function ChatInput({
           <InputPopover
             trigger={
               <>
-                <Zap className="h-3.5 w-3.5" />
+                {codexFastMode ? <Zap className="h-3.5 w-3.5" /> : <Gauge className="h-3.5 w-3.5" />}
                 <span>{codexFastMode ? "Fast Mode" : "Standard"}</span>
               </>
             }
@@ -391,14 +384,12 @@ export const ChatInput = memo(function ChatInput({
               selected={!codexFastMode}
               icon={<Gauge className="h-4 w-4 text-muted-foreground" />}
               label="Standard"
-              description="Use the default Codex service tier"
             />
             <PopoverMenuItem
               onClick={() => setModelOptions("codex", { fastMode: true })}
               selected={codexFastMode}
               icon={<Zap className="h-4 w-4 text-muted-foreground" />}
               label="Fast Mode"
-              description="Map to Codex serviceTier fast"
             />
           </InputPopover>
         ) : null}

@@ -1,12 +1,13 @@
 import { useState } from "react"
 import { Check, ChevronLeft, MessageCircleQuestion } from "lucide-react"
 import type { ProcessedToolCall, AskUserQuestionItem, AskUserQuestionOption } from "./types"
+import type { AskUserQuestionAnswerMap } from "../../../shared/types"
 import { Button } from "../ui/button"
 import { cn } from "../../lib/utils"
 
 interface Props {
   message: Extract<ProcessedToolCall, { toolKind: "ask_user_question" }>
-  onSubmit: (toolUseId: string, questions: AskUserQuestionItem[], answers: Record<string, string>) => void
+  onSubmit: (toolUseId: string, questions: AskUserQuestionItem[], answers: AskUserQuestionAnswerMap) => void
   isLatest: boolean
 }
 
@@ -137,7 +138,7 @@ function OptionRow({
 
 function parseAnswersFromResult(
   result: Extract<ProcessedToolCall, { toolKind: "ask_user_question" }>["result"]
-): Record<string, string> | undefined {
+): AskUserQuestionAnswerMap | undefined {
   return result?.answers
 }
 
@@ -149,23 +150,27 @@ export function AskUserQuestionMessage({ message, onSubmit, isLatest }: Props) {
   const questions = message.input.questions
   const isComplete = !!message.result
   const savedAnswers = parseAnswersFromResult(message.result)
+  const isDiscarded = message.result?.discarded === true
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({})
+  const [submittedAnswers, setSubmittedAnswers] = useState<AskUserQuestionAnswerMap | null>(savedAnswers ?? null)
   const [isSubmitted, setIsSubmitted] = useState(isComplete)
 
-  const getEffectiveAnswer = (questionKey: string, question?: AskUserQuestionItem) => {
+  const getEffectiveAnswers = (questionKey: string, question?: AskUserQuestionItem) => {
     const custom = customInputs[questionKey]?.trim()
     const selectedAnswer = answers[questionKey] || ""
     const q = question || questions.find((candidate) => getQuestionKey(candidate) === questionKey)
 
     if (q?.multiSelect) {
-      const parts = [selectedAnswer, custom].filter(Boolean)
-      return parts.join(", ")
+      return [selectedAnswer, custom]
+        .filter(Boolean)
+        .flatMap((value) => value.split(", ").filter(Boolean))
     }
 
-    return custom || selectedAnswer
+    const value = custom || selectedAnswer
+    return value ? [value] : []
   }
 
   const getSelectedOptions = (question: AskUserQuestionItem) => {
@@ -209,11 +214,11 @@ export function AskUserQuestionMessage({ message, onSubmit, isLatest }: Props) {
     }
   }
 
-  const allQuestionsAnswered = questions.every((question) => getEffectiveAnswer(getQuestionKey(question), question).length > 0)
+  const allQuestionsAnswered = questions.every((question) => getEffectiveAnswers(getQuestionKey(question), question).length > 0)
   const currentQuestion = questions[currentIndex]
   const isLastQuestion = currentIndex === questions.length - 1
   const currentHasAnswer = currentQuestion
-    && getEffectiveAnswer(getQuestionKey(currentQuestion), currentQuestion).length > 0
+    && getEffectiveAnswers(getQuestionKey(currentQuestion), currentQuestion).length > 0
 
   const handleNext = () => {
     if (currentIndex < questions.length - 1) {
@@ -230,29 +235,43 @@ export function AskUserQuestionMessage({ message, onSubmit, isLatest }: Props) {
   const handleSubmit = () => {
     if (!allQuestionsAnswered) return
 
-    const finalAnswers: Record<string, string> = {}
+    const finalAnswers: AskUserQuestionAnswerMap = {}
     for (const q of questions) {
       const key = getQuestionKey(q)
-      finalAnswers[key] = getEffectiveAnswer(key, q)
+      finalAnswers[key] = getEffectiveAnswers(key, q)
     }
-    setAnswers(finalAnswers)
+    setSubmittedAnswers(finalAnswers)
     setIsSubmitted(true)
     onSubmit(message.toolId, questions, finalAnswers)
   }
 
+  const handleCustomInputEnter = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return
+    if (!currentQuestion || !currentHasAnswer) return
+
+    event.preventDefault()
+
+    if (isLastQuestion) {
+      handleSubmit()
+      return
+    }
+
+    handleNext()
+  }
+
   // Completed state
   if (isSubmitted || isComplete) {
-    const displayAnswers = savedAnswers || answers
+    const displayAnswers = savedAnswers || submittedAnswers || {}
 
     return (
       <div className="w-full">
         <div className="rounded-2xl border border-border overflow-hidden">
           <div className="font-medium text-sm p-3 px-4 pr-5 bg-muted  border-b border-border flex flex-row items-center justify-between">
             <p>Question{questions.length !== 1 ? "s" : ""}</p>
-            <p className="">Answers</p>
+            <p className="">{isDiscarded ? "Discarded" : "Answers"}</p>
           </div>
           {questions.map((question, index) => {
-            const answerValue = displayAnswers[getQuestionKey(question)] || displayAnswers[question.question] || ""
+            const answerValue = displayAnswers[getQuestionKey(question)] || displayAnswers[question.question] || []
             const isLast = index === questions.length - 1
 
             return (
@@ -264,8 +283,12 @@ export function AskUserQuestionMessage({ message, onSubmit, isLatest }: Props) {
                 )}
               >
                 <span className="text-sm">{question.question}</span>
-                {answerValue && <span className="text-sm font-medium text-right">{answerValue}</span>}
-                {!answerValue && <span className="text-sm font-medium text-right italic">No Response</span>}
+                {answerValue.length > 0 && <span className="text-sm font-medium text-right">{answerValue.join(", ")}</span>}
+                {answerValue.length === 0 && (
+                  <span className="text-sm font-medium text-right italic">
+                    {isDiscarded ? "Discarded" : "No Response"}
+                  </span>
+                )}
               </div>
             )
           })}
@@ -317,6 +340,7 @@ export function AskUserQuestionMessage({ message, onSubmit, isLatest }: Props) {
               type="text"
               value={customInput}
               onChange={(e) => handleCustomInputChange(currentQuestion, e.target.value)}
+              onKeyDown={handleCustomInputEnter}
               placeholder="Other..."
               className="flex-1 px-3 !py-1 pl-4 min-h-[55px] min-w-0 text-sm bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
             />
