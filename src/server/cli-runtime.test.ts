@@ -22,6 +22,7 @@ function createDeps(overrides: Partial<Parameters<typeof runCli>[1]> = {}) {
   const calls = {
     startServer: [] as Array<{
       port: number
+      host: string
       openBrowser: boolean
       strictPort: boolean
       update: {
@@ -81,6 +82,7 @@ describe("parseArgs", () => {
       kind: "run",
       options: {
         port: 4000,
+        host: "127.0.0.1",
         openBrowser: false,
         strictPort: false,
       },
@@ -92,10 +94,52 @@ describe("parseArgs", () => {
       kind: "run",
       options: {
         port: 3210,
+        host: "127.0.0.1",
         openBrowser: true,
         strictPort: true,
       },
     })
+  })
+
+  test("--remote without value binds all interfaces", () => {
+    expect(parseArgs(["--remote"])).toEqual({
+      kind: "run",
+      options: {
+        port: 3210,
+        host: "0.0.0.0",
+        openBrowser: true,
+        strictPort: false,
+      },
+    })
+  })
+
+  test("--host with IP binds to that address", () => {
+    expect(parseArgs(["--host", "100.64.0.1"])).toEqual({
+      kind: "run",
+      options: {
+        port: 3210,
+        host: "100.64.0.1",
+        openBrowser: true,
+        strictPort: false,
+      },
+    })
+  })
+
+  test("--host with hostname binds to that name", () => {
+    expect(parseArgs(["--host", "dev-box"])).toEqual({
+      kind: "run",
+      options: {
+        port: 3210,
+        host: "dev-box",
+        openBrowser: true,
+        strictPort: false,
+      },
+    })
+  })
+
+  test("--host without a value throws", () => {
+    expect(() => parseArgs(["--host"])).toThrow("Missing value for --host")
+    expect(() => parseArgs(["--host", "--no-open"])).toThrow("Missing value for --host")
   })
 
   test("returns version and help actions without running startup", () => {
@@ -146,6 +190,7 @@ describe("runCli", () => {
     expect(calls.startServer).toHaveLength(1)
     expect(calls.startServer[0]).toMatchObject({
       port: 4000,
+      host: "127.0.0.1",
       openBrowser: false,
       strictPort: false,
       update: {
@@ -180,11 +225,21 @@ describe("runCli", () => {
   })
 
   test("opens the root route in the browser", async () => {
+    delete process.env[CLI_SUPPRESS_OPEN_ONCE_ENV_VAR]
     const { calls, deps } = createDeps()
 
     await runCli(["--port", "4000"], deps)
 
     expect(calls.openUrl).toEqual(["http://localhost:4000"])
+  })
+
+  test("opens browser at hostname when --host <host> is given", async () => {
+    delete process.env[CLI_SUPPRESS_OPEN_ONCE_ENV_VAR]
+    const { calls, deps } = createDeps()
+
+    await runCli(["--host", "dev-box", "--port", "4000"], deps)
+
+    expect(calls.openUrl).toEqual(["http://dev-box:4000"])
   })
 
   test("suppresses browser open for a ui-triggered restarted child", async () => {
