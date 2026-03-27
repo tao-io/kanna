@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { memo, useState, useMemo } from "react"
 import { ChevronRight } from "lucide-react"
 import { ToolCallMessage } from "./ToolCallMessage"
 import { MetaRow, MetaLabel } from "./shared"
@@ -61,7 +61,7 @@ interface Props {
   localPath?: string | null
 }
 
-export function CollapsedToolGroup({ messages, isLoading, localPath }: Props) {
+export const CollapsedToolGroup = memo(function CollapsedToolGroup({ messages, isLoading, localPath }: Props) {
   const [expanded, setExpanded] = useState(false)
 
   const label = useMemo(() => getToolGroupLabel(messages), [messages])
@@ -120,4 +120,4 @@ export function CollapsedToolGroup({ messages, isLoading, localPath }: Props) {
       </div>
     </MetaRow>
   )
-}
+})

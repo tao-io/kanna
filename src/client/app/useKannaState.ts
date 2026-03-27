@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
+import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
 import { PROVIDERS, type AgentProvider, type AskUserQuestionAnswerMap, type KeybindingsSnapshot, type ModelOptions, type ProviderCatalogEntry, type UpdateInstallResult, type UpdateSnapshot } from "../../shared/types"
@@ -10,8 +10,64 @@ import type { ChatSnapshot, LocalProjectsSnapshot, SidebarChatRow, SidebarData }
 import type { AskUserQuestionItem } from "../components/messages/types"
 import { useAppDialog } from "../components/ui/app-dialog"
 import { processTranscriptMessages } from "../lib/parseTranscript"
+import { requestNotificationPermissionOnUserAction, shouldShowCompletionNotification, showChatCompletionNotification } from "../pwa"
 import { canCancelStatus, getLatestToolIds, isProcessingStatus } from "./derived"
 import { KannaSocket, type SocketStatus } from "./socket"
+import type { ChatEvent } from "../../shared/protocol"
+
+function getSidebarChatStatusMap(projectGroups: SidebarData["projectGroups"]) {
+  const statuses = new Map<string, SidebarChatRow["status"]>()
+  for (const group of projectGroups) {
+    for (const chat of group.chats) {
+      statuses.set(chat.chatId, chat.status)
+    }
+  }
+  return statuses
+}
+
+export function reconcileUnreadCompletedChatIds(params: {
+  previousStatuses: ReadonlyMap<string, SidebarChatRow["status"]>
+  projectGroups: SidebarData["projectGroups"]
+  activeChatId: string | null
+  unreadCompletedChatIds: ReadonlySet<string>
+  pendingCompletionChatIds?: ReadonlySet<string>
+  observedRunningPendingChatIds?: ReadonlySet<string>
+  lastSeenMessageAtByChatId?: ReadonlyMap<string, number>
+}) {
+  const nextUnreadCompletedChatIds = new Set(params.unreadCompletedChatIds)
+  const currentChatIds = new Set<string>()
+
+  for (const group of params.projectGroups) {
+    for (const chat of group.chats) {
+      currentChatIds.add(chat.chatId)
+
+      const previousStatus = params.previousStatuses.get(chat.chatId)
+      const completedInBackground = (previousStatus === "starting" || previousStatus === "running") && chat.status === "idle"
+      const completedPendingTurn = params.pendingCompletionChatIds?.has(chat.chatId)
+        && params.observedRunningPendingChatIds?.has(chat.chatId)
+        && chat.status === "idle"
+      const seenMessageAt = params.lastSeenMessageAtByChatId?.get(chat.chatId) ?? 0
+      const hasUnreadCompletedTurnsSinceLastOpen = chat.status === "idle"
+        && typeof chat.lastCompletedTurnAt === "number"
+        && chat.lastCompletedTurnAt > seenMessageAt
+      if ((completedInBackground || completedPendingTurn || hasUnreadCompletedTurnsSinceLastOpen) && chat.chatId !== params.activeChatId) {
+        nextUnreadCompletedChatIds.add(chat.chatId)
+      }
+
+      if (chat.chatId === params.activeChatId) {
+        nextUnreadCompletedChatIds.delete(chat.chatId)
+      }
+    }
+  }
+
+  for (const chatId of nextUnreadCompletedChatIds) {
+    if (!currentChatIds.has(chatId)) {
+      nextUnreadCompletedChatIds.delete(chatId)
+    }
+  }
+
+  return nextUnreadCompletedChatIds
+}
 
 export function getNewestRemainingChatId(projectGroups: SidebarData["projectGroups"], activeChatId: string): string | null {
   const projectGroup = projectGroups.find((group) => group.chats.some((chat) => chat.chatId === activeChatId))
@@ -70,8 +126,13 @@ export function getUiUpdateRestartReconnectAction(
   return "none"
 }
 
-const FIXED_TRANSCRIPT_PADDING_BOTTOM = 320
+export function shouldAutoFollowTranscript(distanceFromBottom: number) {
+  return distanceFromBottom < 24
+}
+
+const MIN_TRANSCRIPT_PADDING_BOTTOM = 320
 const UI_UPDATE_RESTART_STORAGE_KEY = "kanna:ui-update-restart"
+const CHAT_LAST_SEEN_STORAGE_KEY = "kanna:chat-last-seen-completed-turn-at"
 
 function getUiUpdateRestartPhase() {
   return window.sessionStorage.getItem(UI_UPDATE_RESTART_STORAGE_KEY)
@@ -83,6 +144,33 @@ function setUiUpdateRestartPhase(phase: "awaiting_disconnect" | "awaiting_reconn
 
 function clearUiUpdateRestartPhase() {
   window.sessionStorage.removeItem(UI_UPDATE_RESTART_STORAGE_KEY)
+}
+
+function readLastSeenMessageAtByChatId() {
+  if (typeof window === "undefined") return new Map<string, number>()
+
+  try {
+    const raw = window.localStorage.getItem(CHAT_LAST_SEEN_STORAGE_KEY)
+    if (!raw) return new Map<string, number>()
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const entries = Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === "number")
+    return new Map(entries)
+  } catch {
+    return new Map<string, number>()
+  }
+}
+
+function writeLastSeenMessageAtByChatId(lastSeenMessageAtByChatId: ReadonlyMap<string, number>) {
+  if (typeof window === "undefined") return
+
+  try {
+    window.localStorage.setItem(
+      CHAT_LAST_SEEN_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(lastSeenMessageAtByChatId.entries()))
+    )
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 export interface ProjectRequest {
@@ -127,6 +215,113 @@ export function getActiveChatSnapshot(chatSnapshot: ChatSnapshot | null, activeC
   return chatSnapshot
 }
 
+function upsertChatSnapshot(
+  previous: Record<string, ChatSnapshot>,
+  chatId: string,
+  snapshot: ChatSnapshot | null
+): Record<string, ChatSnapshot> {
+  if (!snapshot) {
+    if (!(chatId in previous)) return previous
+    const { [chatId]: _removed, ...rest } = previous
+    return rest
+  }
+
+  if (previous[chatId] === snapshot) return previous
+  return {
+    ...previous,
+    [chatId]: snapshot,
+  }
+}
+
+function applyChatEventToCache(
+  previous: Record<string, ChatSnapshot>,
+  activeChatId: string,
+  event: ChatEvent
+): Record<string, ChatSnapshot> {
+  const current = previous[activeChatId]
+  if (!current) {
+    if (event.type === "chat.reset") {
+      return upsertChatSnapshot(previous, activeChatId, event.snapshot)
+    }
+    return previous
+  }
+
+  switch (event.type) {
+    case "chat.reset":
+      return upsertChatSnapshot(previous, activeChatId, event.snapshot)
+    case "chat.runtime":
+      return {
+        ...previous,
+        [activeChatId]: {
+          ...current,
+          runtime: event.runtime,
+        },
+      }
+    case "chat.messageAppended":
+      return {
+        ...previous,
+        [activeChatId]: {
+          ...current,
+          messages: [...current.messages, event.entry],
+          oldestLoadedMessageId: current.oldestLoadedMessageId ?? event.entry._id,
+        },
+      }
+  }
+}
+
+function prependChatSnapshotChunk(
+  previous: Record<string, ChatSnapshot>,
+  chatId: string,
+  snapshot: ChatSnapshot | null
+): Record<string, ChatSnapshot> {
+  if (!snapshot) return previous
+  const current = previous[chatId]
+  if (!current) {
+    return upsertChatSnapshot(previous, chatId, snapshot)
+  }
+
+  if (snapshot.messages.length === 0) {
+    return {
+      ...previous,
+      [chatId]: {
+        ...current,
+        hasOlderMessages: snapshot.hasOlderMessages,
+        oldestLoadedMessageId: current.oldestLoadedMessageId,
+      },
+    }
+  }
+
+  const existingIds = new Set(current.messages.map((entry) => entry._id))
+  const prepended = snapshot.messages.filter((entry) => !existingIds.has(entry._id))
+  if (prepended.length === 0 && current.hasOlderMessages === snapshot.hasOlderMessages) {
+    return previous
+  }
+
+  return {
+    ...previous,
+    [chatId]: {
+      ...current,
+      runtime: snapshot.runtime,
+      messages: [...prepended, ...current.messages],
+      hasOlderMessages: snapshot.hasOlderMessages,
+      oldestLoadedMessageId: snapshot.oldestLoadedMessageId ?? current.oldestLoadedMessageId,
+      availableProviders: snapshot.availableProviders,
+    },
+  }
+}
+
+function getRecentSidebarChatIds(projectGroups: SidebarData["projectGroups"], limit: number): string[] {
+  return projectGroups
+    .flatMap((group) => group.chats)
+    .sort((a, b) => {
+      const aTime = a.lastMessageAt ?? a._creationTime
+      const bTime = b.lastMessageAt ?? b._creationTime
+      return bTime - aTime
+    })
+    .slice(0, limit)
+    .map((chat) => chat.chatId)
+}
+
 export interface KannaState {
   socket: KannaSocket
   activeChatId: string | null
@@ -148,8 +343,11 @@ export interface KannaState {
   latestToolIds: ReturnType<typeof getLatestToolIds>
   runtime: ChatSnapshot["runtime"] | null
   availableProviders: ProviderCatalogEntry[]
+  unreadCompletedChatIds: ReadonlySet<string>
   isProcessing: boolean
   canCancel: boolean
+  hasOlderMessages: boolean
+  loadingOlderMessages: boolean
   transcriptPaddingBottom: number
   showScrollButton: boolean
   navbarLocalPath?: string
@@ -168,6 +366,7 @@ export interface KannaState {
   handleInstallUpdate: () => Promise<void>
   handleSend: (content: string, options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean }) => Promise<void>
   handleCancel: () => Promise<void>
+  handleLoadOlderMessages: () => Promise<void>
   handleDeleteChat: (chat: SidebarChatRow) => Promise<void>
   handleRemoveProject: (projectId: string) => Promise<void>
   handleOpenExternal: (action: "open_finder" | "open_terminal" | "open_editor") => Promise<void>
@@ -195,12 +394,13 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const [sidebarData, setSidebarData] = useState<SidebarData>({ projectGroups: [] })
   const [localProjects, setLocalProjects] = useState<LocalProjectsSnapshot | null>(null)
   const [updateSnapshot, setUpdateSnapshot] = useState<UpdateSnapshot | null>(null)
-  const [chatSnapshot, setChatSnapshot] = useState<ChatSnapshot | null>(null)
+  const [chatSnapshotsById, setChatSnapshotsById] = useState<Record<string, ChatSnapshot>>({})
   const [keybindings, setKeybindings] = useState<KeybindingsSnapshot | null>(null)
   const [connectionStatus, setConnectionStatus] = useState<SocketStatus>("connecting")
   const [sidebarReady, setSidebarReady] = useState(false)
   const [localProjectsReady, setLocalProjectsReady] = useState(false)
   const [chatReady, setChatReady] = useState(false)
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -209,18 +409,153 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const [commandError, setCommandError] = useState<string | null>(null)
   const [startingLocalPath, setStartingLocalPath] = useState<string | null>(null)
   const [pendingChatId, setPendingChatId] = useState<string | null>(null)
+  const [unreadCompletedChatIds, setUnreadCompletedChatIds] = useState<Set<string>>(new Set())
   const editorLabel = getEditorPresetLabel(useTerminalPreferencesStore((store) => store.editorPreset))
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLDivElement>(null)
+  const pendingPrependScrollHeightRef = useRef<number | null>(null)
+  const autoFollowTranscriptRef = useRef(true)
+  const initialScrollCompletedRef = useRef(false)
+  const initialScrollFrameRef = useRef<number | null>(null)
+  const initialScrollTimeoutRef = useRef<number | null>(null)
+  const previousSidebarStatusesRef = useRef<ReadonlyMap<string, SidebarChatRow["status"]>>(new Map())
+  const activeChatIdRef = useRef<string | null>(activeChatId)
+  const pendingNotificationChatIdsRef = useRef<Set<string>>(new Set())
+  const observedRunningPendingChatIdsRef = useRef<Set<string>>(new Set())
+  const lastSeenMessageAtByChatIdRef = useRef<ReadonlyMap<string, number>>(readLastSeenMessageAtByChatId())
+  const processedTranscriptCacheRef = useRef(new Map<string, {
+    source: ChatSnapshot["messages"]
+    messages: ReturnType<typeof processTranscriptMessages>
+    latestToolIds: ReturnType<typeof getLatestToolIds>
+  }>())
+  const prewarmingChatIdsRef = useRef(new Set<string>())
+
+  function updatePendingNotificationChatIds(updater: (previous: Set<string>) => Set<string>) {
+    const next = updater(new Set(pendingNotificationChatIdsRef.current))
+    pendingNotificationChatIdsRef.current = next
+  }
+
+  function updateObservedRunningPendingChatIds(updater: (previous: Set<string>) => Set<string>) {
+    const next = updater(new Set(observedRunningPendingChatIdsRef.current))
+    observedRunningPendingChatIdsRef.current = next
+  }
+
+  function markChatSeen(chatId: string, lastCompletedTurnAt?: number) {
+    if (typeof lastCompletedTurnAt !== "number") return
+
+    const previous = lastSeenMessageAtByChatIdRef.current.get(chatId) ?? 0
+    if (lastCompletedTurnAt <= previous) return
+
+    const next = new Map(lastSeenMessageAtByChatIdRef.current)
+    next.set(chatId, lastCompletedTurnAt)
+    lastSeenMessageAtByChatIdRef.current = next
+    writeLastSeenMessageAtByChatId(next)
+  }
+
+  function warmProcessedTranscriptCache(chatId: string, snapshot: ChatSnapshot | null) {
+    if (!snapshot) return
+    const cached = processedTranscriptCacheRef.current.get(chatId)
+    if (cached?.source === snapshot.messages) return
+
+    const messages = processTranscriptMessages(snapshot.messages)
+    const latestToolIds = getLatestToolIds(messages)
+    processedTranscriptCacheRef.current.set(chatId, {
+      source: snapshot.messages,
+      messages,
+      latestToolIds,
+    })
+  }
+
+  useEffect(() => {
+    activeChatIdRef.current = activeChatId
+  }, [activeChatId])
 
   useEffect(() => socket.onStatus(setConnectionStatus), [socket])
 
   useEffect(() => {
     return socket.subscribe<SidebarData>({ type: "sidebar" }, (snapshot) => {
+      const chatById = new Map(snapshot.projectGroups.flatMap((group) => group.chats.map((chat) => [chat.chatId, chat] as const)))
+      const completedChatIds: string[] = []
+
+      updateObservedRunningPendingChatIds((previous) => {
+        const next = new Set(previous)
+        for (const chat of chatById.values()) {
+          if (!pendingNotificationChatIdsRef.current.has(chat.chatId)) continue
+          if (chat.status === "starting" || chat.status === "running") {
+            next.add(chat.chatId)
+          }
+        }
+        for (const chatId of next) {
+          if (!chatById.has(chatId) || !pendingNotificationChatIdsRef.current.has(chatId)) {
+            next.delete(chatId)
+          }
+        }
+        return next
+      })
+
+      for (const chat of chatById.values()) {
+        const previousStatus = previousSidebarStatusesRef.current.get(chat.chatId)
+        if ((previousStatus === "starting" || previousStatus === "running") && chat.status === "idle") {
+          completedChatIds.push(chat.chatId)
+        }
+      }
+
+      setUnreadCompletedChatIds((previous) => reconcileUnreadCompletedChatIds({
+        previousStatuses: previousSidebarStatusesRef.current,
+        projectGroups: snapshot.projectGroups,
+        activeChatId: activeChatIdRef.current,
+        unreadCompletedChatIds: previous,
+        pendingCompletionChatIds: pendingNotificationChatIdsRef.current,
+        observedRunningPendingChatIds: observedRunningPendingChatIdsRef.current,
+        lastSeenMessageAtByChatId: lastSeenMessageAtByChatIdRef.current,
+      }))
+      updatePendingNotificationChatIds((previous) => {
+        if (previous.size === 0 || completedChatIds.length === 0) return previous
+        const next = new Set(previous)
+        for (const chatId of completedChatIds) {
+          next.delete(chatId)
+        }
+        return next
+      })
+      updateObservedRunningPendingChatIds((previous) => {
+        if (previous.size === 0 || completedChatIds.length === 0) return previous
+        const next = new Set(previous)
+        for (const chatId of completedChatIds) {
+          next.delete(chatId)
+        }
+        return next
+      })
+      previousSidebarStatusesRef.current = getSidebarChatStatusMap(snapshot.projectGroups)
+      const activeChat = activeChatIdRef.current ? chatById.get(activeChatIdRef.current) : null
+      if (activeChat) {
+        markChatSeen(activeChat.chatId, activeChat.lastCompletedTurnAt)
+      }
       setSidebarData(snapshot)
       setSidebarReady(true)
       setCommandError(null)
+
+      for (const chatId of completedChatIds) {
+        if (!pendingNotificationChatIdsRef.current.has(chatId)) {
+          continue
+        }
+        if (!shouldShowCompletionNotification({
+          chatId,
+          activeChatId: activeChatIdRef.current,
+          documentVisibilityState: document.visibilityState,
+        })) {
+          continue
+        }
+
+        const chat = chatById.get(chatId)
+        if (!chat) {
+          continue
+        }
+        void showChatCompletionNotification({
+          chatId,
+          chatTitle: chat.title,
+        })
+      }
     })
   }, [socket])
 
@@ -283,27 +618,70 @@ export function useKannaState(activeChatId: string | null): KannaState {
   }, [socket])
 
   useEffect(() => {
+    const prewarmChatIds = getRecentSidebarChatIds(sidebarData.projectGroups, 4)
+    for (const chatId of prewarmChatIds) {
+      if (chatId === activeChatId) continue
+
+      const existingSnapshot = chatSnapshotsById[chatId]
+      if (existingSnapshot) {
+        warmProcessedTranscriptCache(chatId, existingSnapshot)
+        continue
+      }
+      if (prewarmingChatIdsRef.current.has(chatId)) continue
+
+      prewarmingChatIdsRef.current.add(chatId)
+      void socket.command<ChatSnapshot | null>({ type: "chat.prefetch", chatId })
+        .then((snapshot) => {
+          if (!snapshot) return
+          startTransition(() => {
+            setChatSnapshotsById((previous) => upsertChatSnapshot(previous, chatId, snapshot))
+          })
+          warmProcessedTranscriptCache(chatId, snapshot)
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          prewarmingChatIdsRef.current.delete(chatId)
+        })
+    }
+  }, [activeChatId, chatSnapshotsById, sidebarData.projectGroups, socket])
+
+  useEffect(() => {
     if (!activeChatId) {
-      logKannaState("clearing chat snapshot for non-chat route")
-      setChatSnapshot(null)
+      logKannaState("clearing active chat route")
       setChatReady(true)
       return
     }
 
     logKannaState("subscribing to chat", { activeChatId })
-    setChatSnapshot(null)
-    setChatReady(false)
-    return socket.subscribe<ChatSnapshot | null>({ type: "chat", chatId: activeChatId }, (snapshot) => {
-      logKannaState("chat snapshot received", {
-        activeChatId,
-        snapshotChatId: snapshot?.runtime.chatId ?? null,
-        snapshotProvider: snapshot?.runtime.provider ?? null,
-        snapshotStatus: snapshot?.runtime.status ?? null,
-      })
-      setChatSnapshot(snapshot)
-      setChatReady(true)
-      setCommandError(null)
-    })
+    setChatReady(Boolean(chatSnapshotsById[activeChatId]))
+    return socket.subscribe<ChatSnapshot | null, ChatEvent>(
+      { type: "chat", chatId: activeChatId },
+      (snapshot) => {
+        logKannaState("chat snapshot received", {
+          activeChatId,
+          snapshotChatId: snapshot?.runtime.chatId ?? null,
+          snapshotProvider: snapshot?.runtime.provider ?? null,
+          snapshotStatus: snapshot?.runtime.status ?? null,
+        })
+        warmProcessedTranscriptCache(activeChatId, snapshot)
+        startTransition(() => {
+          setChatSnapshotsById((previous) => upsertChatSnapshot(previous, activeChatId, snapshot))
+          setChatReady(true)
+          setCommandError(null)
+        })
+      },
+      (event) => {
+        if (event.chatId !== activeChatId) return
+        startTransition(() => {
+          setChatSnapshotsById((previous) => {
+            const next = applyChatEventToCache(previous, activeChatId, event)
+            warmProcessedTranscriptCache(activeChatId, next[activeChatId] ?? null)
+            return next
+          })
+          setChatReady(true)
+        })
+      }
+    )
   }, [activeChatId, socket])
 
   useEffect(() => {
@@ -330,6 +708,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
     navigate("/")
   }, [activeChatId, chatReady, navigate, pendingChatId, sidebarData.projectGroups, sidebarReady])
 
+  const chatSnapshot = useMemo(
+    () => (activeChatId ? chatSnapshotsById[activeChatId] ?? null : null),
+    [activeChatId, chatSnapshotsById]
+  )
+
   useEffect(() => {
     if (!chatSnapshot) return
     setSelectedProjectId(chatSnapshot.runtime.projectId)
@@ -337,6 +720,54 @@ export function useKannaState(activeChatId: string | null): KannaState {
       setPendingChatId(null)
     }
   }, [chatSnapshot, pendingChatId])
+
+  useEffect(() => {
+    autoFollowTranscriptRef.current = true
+    initialScrollCompletedRef.current = false
+    if (initialScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(initialScrollFrameRef.current)
+      initialScrollFrameRef.current = null
+    }
+    if (initialScrollTimeoutRef.current !== null) {
+      window.clearTimeout(initialScrollTimeoutRef.current)
+      initialScrollTimeoutRef.current = null
+    }
+    setIsAtBottom(true)
+    if (!activeChatId) return
+    const activeChat = sidebarData.projectGroups.flatMap((group) => group.chats).find((chat) => chat.chatId === activeChatId)
+    if (activeChat) {
+      markChatSeen(activeChat.chatId, activeChat.lastCompletedTurnAt)
+    }
+    setUnreadCompletedChatIds((previous) => {
+      if (!previous.has(activeChatId)) return previous
+      const next = new Set(previous)
+      next.delete(activeChatId)
+      return next
+    })
+    updatePendingNotificationChatIds((previous) => {
+      if (!previous.has(activeChatId)) return previous
+      const next = new Set(previous)
+      next.delete(activeChatId)
+      return next
+    })
+    updateObservedRunningPendingChatIds((previous) => {
+      if (!previous.has(activeChatId)) return previous
+      const next = new Set(previous)
+      next.delete(activeChatId)
+      return next
+    })
+  }, [activeChatId, sidebarData.projectGroups])
+
+  useEffect(() => {
+    return () => {
+      if (initialScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(initialScrollFrameRef.current)
+      }
+      if (initialScrollTimeoutRef.current !== null) {
+        window.clearTimeout(initialScrollTimeoutRef.current)
+      }
+    }
+  }, [])
 
   useLayoutEffect(() => {
     const element = inputRef.current
@@ -364,13 +795,37 @@ export function useKannaState(activeChatId: string | null): KannaState {
       pendingChatId,
     })
   }, [activeChatId, activeChatSnapshot, chatSnapshot, pendingChatId])
-  const messages = useMemo(() => processTranscriptMessages(activeChatSnapshot?.messages ?? []), [activeChatSnapshot?.messages])
-  const latestToolIds = useMemo(() => getLatestToolIds(messages), [messages])
+  const processedTranscript = useMemo(() => {
+    if (!activeChatSnapshot || !activeChatId) {
+      return {
+        messages: [] as ReturnType<typeof processTranscriptMessages>,
+        latestToolIds: getLatestToolIds([]),
+      }
+    }
+
+    const cached = processedTranscriptCacheRef.current.get(activeChatId)
+    if (cached?.source === activeChatSnapshot.messages) {
+      return cached
+    }
+
+    const messages = processTranscriptMessages(activeChatSnapshot.messages)
+    const latestToolIds = getLatestToolIds(messages)
+    const next = {
+      source: activeChatSnapshot.messages,
+      messages,
+      latestToolIds,
+    }
+    processedTranscriptCacheRef.current.set(activeChatId, next)
+    return next
+  }, [activeChatId, activeChatSnapshot])
+  const messages = processedTranscript.messages
+  const latestToolIds = processedTranscript.latestToolIds
   const runtime = activeChatSnapshot?.runtime ?? null
+  const hasOlderMessages = activeChatSnapshot?.hasOlderMessages ?? false
   const availableProviders = activeChatSnapshot?.availableProviders ?? PROVIDERS
   const isProcessing = isProcessingStatus(runtime?.status)
   const canCancel = canCancelStatus(runtime?.status)
-  const transcriptPaddingBottom = FIXED_TRANSCRIPT_PADDING_BOTTOM
+  const transcriptPaddingBottom = Math.max(MIN_TRANSCRIPT_PADDING_BOTTOM, inputHeight + 24)
   const showScrollButton = !isAtBottom && messages.length > 0
   const fallbackLocalProjectPath = localProjects?.projects[0]?.localPath ?? null
   const navbarLocalPath =
@@ -384,27 +839,117 @@ export function useKannaState(activeChatId: string | null): KannaState {
     ?? fallbackLocalProjectPath
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (initialScrollCompletedRef.current) return
+
     const element = scrollRef.current
     if (!element) return
-    const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-    if (shouldPinTranscriptToBottom(distance)) {
-      element.scrollTo({ top: element.scrollHeight, behavior: "smooth" })
+    if (activeChatId && !runtime) return
+
+    const scrollToLatestMessage = () => {
+      const currentElement = scrollRef.current
+      if (!currentElement) return
+      currentElement.scrollTo({ top: currentElement.scrollHeight, behavior: "auto" })
     }
+
+    scrollToLatestMessage()
+    if (initialScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(initialScrollFrameRef.current)
+    }
+    initialScrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollToLatestMessage()
+      initialScrollFrameRef.current = null
+    })
+    if (initialScrollTimeoutRef.current !== null) {
+      window.clearTimeout(initialScrollTimeoutRef.current)
+    }
+    initialScrollTimeoutRef.current = window.setTimeout(() => {
+      scrollToLatestMessage()
+      initialScrollTimeoutRef.current = null
+    }, 60)
+    initialScrollCompletedRef.current = true
+  }, [activeChatId, inputHeight, messages.length, runtime])
+
+  useEffect(() => {
+    if (!initialScrollCompletedRef.current || !autoFollowTranscriptRef.current) return
+
+    const frameId = window.requestAnimationFrame(() => {
+      const element = scrollRef.current
+      if (!element || !autoFollowTranscriptRef.current) return
+      element.scrollTo({ top: element.scrollHeight, behavior: "auto" })
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
   }, [activeChatId, inputHeight, messages.length, runtime?.status])
 
   function updateScrollState() {
     const element = scrollRef.current
     if (!element) return
     const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-    setIsAtBottom(distance < 24)
+    const nextIsAtBottom = shouldAutoFollowTranscript(distance)
+    autoFollowTranscriptRef.current = nextIsAtBottom
+    setIsAtBottom(nextIsAtBottom)
+    if (initialScrollCompletedRef.current && !loadingOlderMessages && hasOlderMessages && element.scrollTop <= 160) {
+      void handleLoadOlderMessages()
+    }
   }
 
   function scrollToBottom() {
     const element = scrollRef.current
     if (!element) return
+    autoFollowTranscriptRef.current = true
+    setIsAtBottom(true)
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" })
   }
+
+  async function handleLoadOlderMessages() {
+    if (!activeChatId || loadingOlderMessages) return
+    const snapshot = chatSnapshotsById[activeChatId]
+    if (!snapshot?.hasOlderMessages) return
+
+    const beforeMessageId = snapshot.oldestLoadedMessageId ?? snapshot.messages[0]?._id
+    if (!beforeMessageId) return
+
+    const element = scrollRef.current
+    pendingPrependScrollHeightRef.current = element?.scrollHeight ?? null
+    setLoadingOlderMessages(true)
+    try {
+      const olderSnapshot = await socket.command<ChatSnapshot | null>({
+        type: "chat.loadMore",
+        chatId: activeChatId,
+        beforeMessageId,
+        limit: 200,
+      })
+      startTransition(() => {
+        setChatSnapshotsById((previous) => prependChatSnapshotChunk(previous, activeChatId, olderSnapshot))
+      })
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+      pendingPrependScrollHeightRef.current = null
+    } finally {
+      setLoadingOlderMessages(false)
+    }
+  }
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      updateScrollState()
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [inputHeight, messages.length, runtime?.status])
+
+  useLayoutEffect(() => {
+    const previousHeight = pendingPrependScrollHeightRef.current
+    if (previousHeight === null) return
+
+    const element = scrollRef.current
+    if (!element) return
+
+    const nextHeight = element.scrollHeight
+    element.scrollTop += nextHeight - previousHeight
+    pendingPrependScrollHeightRef.current = null
+  }, [messages.length])
 
   async function createChatForProject(projectId: string) {
     useChatPreferencesStore.getState().initializeComposerForNewChat()
@@ -509,6 +1054,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
     options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean }
   ) {
     try {
+      requestNotificationPermissionOnUserAction()
+
       let projectId = selectedProjectId ?? sidebarData.projectGroups[0]?.groupKey ?? null
       if (!activeChatId && !projectId && fallbackLocalProjectPath) {
         const project = await socket.command<{ projectId: string }>({
@@ -536,7 +1083,18 @@ export function useKannaState(activeChatId: string | null): KannaState {
 
       if (!activeChatId && result.chatId) {
         setPendingChatId(result.chatId)
+        updatePendingNotificationChatIds((previous) => {
+          const next = new Set(previous)
+          next.add(result.chatId!)
+          return next
+        })
         navigate(`/chat/${result.chatId}`)
+      } else if (activeChatId) {
+        updatePendingNotificationChatIds((previous) => {
+          const next = new Set(previous)
+          next.add(activeChatId)
+          return next
+        })
       }
       setCommandError(null)
     } catch (error) {
@@ -729,8 +1287,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
     latestToolIds,
     runtime,
     availableProviders,
+    unreadCompletedChatIds,
     isProcessing,
     canCancel,
+    hasOlderMessages,
+    loadingOlderMessages,
     transcriptPaddingBottom,
     showScrollButton,
     navbarLocalPath,
@@ -749,6 +1310,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     handleInstallUpdate,
     handleSend,
     handleCancel,
+    handleLoadOlderMessages,
     handleDeleteChat,
     handleRemoveProject,
     handleOpenExternal,

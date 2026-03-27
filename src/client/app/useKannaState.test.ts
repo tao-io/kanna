@@ -3,10 +3,12 @@ import {
   getActiveChatSnapshot,
   getNewestRemainingChatId,
   getUiUpdateRestartReconnectAction,
+  reconcileUnreadCompletedChatIds,
   resolveComposeIntent,
+  shouldAutoFollowTranscript,
   shouldPinTranscriptToBottom,
 } from "./useKannaState"
-import type { ChatSnapshot, SidebarData } from "../../shared/types"
+import type { ChatSnapshot, SidebarChatRow, SidebarData } from "../../shared/types"
 
 function createSidebarData(): SidebarData {
   return {
@@ -177,6 +179,8 @@ describe("getActiveChatSnapshot", () => {
         sessionToken: null,
       },
       messages: [],
+      hasOlderMessages: false,
+      oldestLoadedMessageId: null,
       availableProviders: [],
     }
 
@@ -196,9 +200,140 @@ describe("getActiveChatSnapshot", () => {
         sessionToken: null,
       },
       messages: [],
+      hasOlderMessages: false,
+      oldestLoadedMessageId: null,
       availableProviders: [],
     }
 
     expect(getActiveChatSnapshot(snapshot, "chat-new")).toBeNull()
+  })
+})
+
+describe("shouldAutoFollowTranscript", () => {
+  test("returns true when the transcript is still pinned to the bottom", () => {
+    expect(shouldAutoFollowTranscript(0)).toBe(true)
+  })
+
+  test("returns true when the transcript is only slightly above the bottom", () => {
+    expect(shouldAutoFollowTranscript(23)).toBe(true)
+  })
+
+  test("returns false when the reader has scrolled away from the bottom", () => {
+    expect(shouldAutoFollowTranscript(24)).toBe(false)
+  })
+})
+
+describe("reconcileUnreadCompletedChatIds", () => {
+  function createChat(chatId: string, status: SidebarChatRow["status"]): SidebarChatRow {
+    return {
+      _id: `row-${chatId}`,
+      _creationTime: 1,
+      chatId,
+      title: chatId,
+      status,
+      localPath: "/tmp/project-1",
+      provider: null,
+      lastMessageAt: 1,
+      hasAutomation: false,
+    }
+  }
+
+  test("marks background chats when they finish running", () => {
+    const next = reconcileUnreadCompletedChatIds({
+      previousStatuses: new Map<string, SidebarChatRow["status"]>([["chat-1", "running"]]),
+      projectGroups: [{
+        groupKey: "project-1",
+        localPath: "/tmp/project-1",
+        chats: [createChat("chat-1", "idle")],
+      }],
+      activeChatId: "chat-2",
+      unreadCompletedChatIds: new Set(),
+    })
+
+    expect([...next]).toEqual(["chat-1"])
+  })
+
+  test("marks background chats when a pending sent turn has completed", () => {
+    const next = reconcileUnreadCompletedChatIds({
+      previousStatuses: new Map<string, SidebarChatRow["status"]>([["chat-1", "idle"]]),
+      projectGroups: [{
+        groupKey: "project-1",
+        localPath: "/tmp/project-1",
+        chats: [createChat("chat-1", "idle")],
+      }],
+      activeChatId: "chat-2",
+      unreadCompletedChatIds: new Set(),
+      pendingCompletionChatIds: new Set(["chat-1"]),
+      observedRunningPendingChatIds: new Set(["chat-1"]),
+    })
+
+    expect([...next]).toEqual(["chat-1"])
+  })
+
+  test("does not mark a pending chat until it has been seen running", () => {
+    const next = reconcileUnreadCompletedChatIds({
+      previousStatuses: new Map<string, SidebarChatRow["status"]>([["chat-1", "idle"]]),
+      projectGroups: [{
+        groupKey: "project-1",
+        localPath: "/tmp/project-1",
+        chats: [createChat("chat-1", "idle")],
+      }],
+      activeChatId: "chat-2",
+      unreadCompletedChatIds: new Set(),
+      pendingCompletionChatIds: new Set(["chat-1"]),
+      observedRunningPendingChatIds: new Set(),
+      lastSeenMessageAtByChatId: new Map([["chat-1", 1]]),
+    })
+
+    expect(next.size).toBe(0)
+  })
+
+  test("marks chats with unseen newer messages after reopening the app", () => {
+    const next = reconcileUnreadCompletedChatIds({
+      previousStatuses: new Map<string, SidebarChatRow["status"]>([["chat-1", "idle"]]),
+      projectGroups: [{
+        groupKey: "project-1",
+        localPath: "/tmp/project-1",
+        chats: [{
+          ...createChat("chat-1", "idle"),
+          lastCompletedTurnAt: 10,
+        }],
+      }],
+      activeChatId: "chat-2",
+      unreadCompletedChatIds: new Set(),
+      lastSeenMessageAtByChatId: new Map([["chat-1", 5]]),
+    })
+
+    expect([...next]).toEqual(["chat-1"])
+  })
+
+  test("does not mark the active chat when it finishes", () => {
+    const next = reconcileUnreadCompletedChatIds({
+      previousStatuses: new Map<string, SidebarChatRow["status"]>([["chat-1", "running"]]),
+      projectGroups: [{
+        groupKey: "project-1",
+        localPath: "/tmp/project-1",
+        chats: [createChat("chat-1", "idle")],
+      }],
+      activeChatId: "chat-1",
+      unreadCompletedChatIds: new Set(),
+    })
+
+    expect(next.size).toBe(0)
+  })
+
+  test("clears markers for the chat that becomes active", () => {
+    const next = reconcileUnreadCompletedChatIds({
+      previousStatuses: new Map<string, SidebarChatRow["status"]>([["chat-1", "idle"]]),
+      projectGroups: [{
+        groupKey: "project-1",
+        localPath: "/tmp/project-1",
+        chats: [createChat("chat-1", "idle")],
+      }],
+      activeChatId: "chat-1",
+      unreadCompletedChatIds: new Set(["chat-1"]),
+    })
+
+    expect(next.size).toBe(0)
   })
 })

@@ -1,7 +1,7 @@
 import { UserRound, X } from "lucide-react"
 import type { ProcessedToolCall } from "./types"
 import { MetaRow, MetaLabel, MetaCodeBlock, ExpandableRow, VerticalLineContainer, getToolIcon } from "./shared"
-import { useMemo } from "react"
+import { memo, useMemo } from "react"
 import { stripWorkspacePath } from "../../lib/pathUtils"
 import { AnimatedShinyText } from "../ui/animated-shiny-text"
 import { formatBashCommandTitle, toTitleCase } from "../../lib/formatters"
@@ -13,7 +13,7 @@ interface Props {
   localPath?: string | null
 }
 
-export function ToolCallMessage({ message, isLoading = false, localPath }: Props) {
+export const ToolCallMessage = memo(function ToolCallMessage({ message, isLoading = false, localPath }: Props) {
   const hasResult = message.result !== undefined
   const showLoadingState = !hasResult && isLoading
 
@@ -71,75 +71,79 @@ export function ToolCallMessage({ message, isLoading = false, localPath }: Props
   const isEditTool = message.toolKind === "edit_file"
   const isReadTool = message.toolKind === "read_file"
 
-  const resultText = useMemo(() => {
-    if (typeof message.result === "string") return message.result
-    if (!message.result) return ""
-    if (typeof message.result === "object" && message.result !== null && "content" in message.result) {
-      const content = (message.result as { content?: unknown }).content
-      if (typeof content === "string") return content
-    }
-    return JSON.stringify(message.result, null, 2)
-  }, [message.result])
-
-  const inputText = useMemo(() => {
-    switch (message.toolKind) {
-      case "bash":
-        return message.input.command
-      case "write_file":
-        return message.input.content
-      default:
-        return JSON.stringify(message.input, null, 2)
-    }
-  }, [message])
-
   return (
     <MetaRow className="w-full">
       <ExpandableRow
-        expandedContent={
-          <VerticalLineContainer className="my-4 text-sm">
-            <div className="flex flex-col gap-2">
-              {isEditTool ? (
-                <FileContentView
-                  content=""
-                  isDiff
-                  oldString={message.input.oldString}
-                  newString={message.input.newString}
-                />
-              ) : !isReadTool && !isWriteTool && (
-                <MetaCodeBlock label={
-                  isBashTool ? (
-                    <span className="flex items-center gap-2 w-full">
-                      <span>Command</span>
-                      {!!message.input.timeoutMs && (
-                        <span className="text-muted-foreground">timeout: {String(message.input.timeoutMs)}ms</span>
-                      )}
-                      {!!message.input.runInBackground && (
-                        <span className="text-muted-foreground">background</span>
-                      )}
-                    </span>
-                  ) : isWriteTool ? "Contents" : "Input"
-                } copyText={inputText}>
-                  {inputText}
-                </MetaCodeBlock>
-              )}
-              {hasResult && isReadTool && !message.isError && (
-                <FileContentView
-                  content={resultText}
-                />
-              )}
-              {isWriteTool && !message.isError && (
-                <FileContentView
-                  content={message.input.content}
-                />
-              )}
-              {hasResult && !isReadTool && !(isWriteTool && !message.isError) && !(isEditTool && !message.isError) && (
-                <MetaCodeBlock label={message.isError ? "Error" : "Result"} copyText={resultText}>
-                  {resultText}
-                </MetaCodeBlock>
-              )}
-            </div>
-          </VerticalLineContainer>
-        }
+        expandedContent={(expanded) => {
+          if (!expanded) return null
+
+          const resultText = (() => {
+            if (typeof message.result === "string") return message.result
+            if (!message.result) return ""
+            if (typeof message.result === "object" && message.result !== null && "content" in message.result) {
+              const content = (message.result as { content?: unknown }).content
+              if (typeof content === "string") return content
+            }
+            return JSON.stringify(message.result, null, 2)
+          })()
+
+          const inputText = (() => {
+            switch (message.toolKind) {
+              case "bash":
+                return message.input.command
+              case "write_file":
+                return message.input.content
+              default:
+                return JSON.stringify(message.input, null, 2)
+            }
+          })()
+
+          return (
+            <VerticalLineContainer className="my-4 text-sm">
+              <div className="flex flex-col gap-2">
+                {isEditTool ? (
+                  <FileContentView
+                    content=""
+                    isDiff
+                    oldString={message.input.oldString}
+                    newString={message.input.newString}
+                  />
+                ) : !isReadTool && !isWriteTool && (
+                  <MetaCodeBlock label={
+                    isBashTool ? (
+                      <span className="flex items-center gap-2 w-full">
+                        <span>Command</span>
+                        {!!message.input.timeoutMs && (
+                          <span className="text-muted-foreground">timeout: {String(message.input.timeoutMs)}ms</span>
+                        )}
+                        {!!message.input.runInBackground && (
+                          <span className="text-muted-foreground">background</span>
+                        )}
+                      </span>
+                    ) : isWriteTool ? "Contents" : "Input"
+                  } copyText={inputText}>
+                    {inputText}
+                  </MetaCodeBlock>
+                )}
+                {hasResult && isReadTool && !message.isError && (
+                  <FileContentView
+                    content={resultText}
+                  />
+                )}
+                {isWriteTool && !message.isError && (
+                  <FileContentView
+                    content={message.input.content}
+                  />
+                )}
+                {hasResult && !isReadTool && !(isWriteTool && !message.isError) && !(isEditTool && !message.isError) && (
+                  <MetaCodeBlock label={message.isError ? "Error" : "Result"} copyText={resultText}>
+                    {resultText}
+                  </MetaCodeBlock>
+                )}
+              </div>
+            </VerticalLineContainer>
+          )
+        }}
       >
 
         <div className={`w-5 h-5 relative flex items-center justify-center`}>
@@ -169,4 +173,4 @@ export function ToolCallMessage({ message, isLoading = false, localPath }: Props
       </ExpandableRow>
     </MetaRow>
   )
-}
+})
