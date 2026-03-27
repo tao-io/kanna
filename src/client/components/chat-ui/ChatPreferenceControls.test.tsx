@@ -14,6 +14,7 @@ describe("ChatPreferenceControls", () => {
         onProviderChange={() => {}}
         onModelChange={() => {}}
         onClaudeReasoningEffortChange={() => {}}
+        onClaudeContextWindowChange={() => {}}
         onCodexReasoningEffortChange={() => {}}
         onCodexFastModeChange={() => {}}
         includePlanMode={false}
@@ -33,10 +34,11 @@ describe("ChatPreferenceControls", () => {
         availableProviders={PROVIDERS}
         selectedProvider="claude"
         model="opus"
-        modelOptions={{ reasoningEffort: "max" }}
+        modelOptions={{ reasoningEffort: "max", contextWindow: "1m" }}
         onProviderChange={() => {}}
         onModelChange={() => {}}
         onClaudeReasoningEffortChange={() => {}}
+        onClaudeContextWindowChange={() => {}}
         onCodexReasoningEffortChange={() => {}}
         onCodexFastModeChange={() => {}}
         planMode
@@ -48,6 +50,7 @@ describe("ChatPreferenceControls", () => {
     expect(html).toContain("Claude")
     expect(html).toContain("Opus")
     expect(html).toContain("Max")
+    expect(html).toContain("1M")
     expect(html).toContain("Plan Mode")
   })
 })

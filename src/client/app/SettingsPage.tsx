@@ -826,6 +826,9 @@ export function SettingsPage() {
                           onClaudeReasoningEffortChange={(reasoningEffort) => {
                             setProviderDefaultModelOptions("claude", { reasoningEffort })
                           }}
+                          onClaudeContextWindowChange={(contextWindow) => {
+                            setProviderDefaultModelOptions("claude", { contextWindow })
+                          }}
                           onCodexReasoningEffortChange={() => {}}
                           onCodexFastModeChange={() => {}}
                           planMode={providerDefaults.claude.planMode}
@@ -853,6 +856,7 @@ export function SettingsPage() {
                             setProviderDefaultModel("codex", model)
                           }}
                           onClaudeReasoningEffortChange={() => {}}
+                          onClaudeContextWindowChange={() => {}}
                           onCodexReasoningEffortChange={(reasoningEffort) => {
                             setProviderDefaultModelOptions("codex", { reasoningEffort })
                           }}

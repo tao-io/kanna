@@ -33,7 +33,7 @@ describe("resolvePlanModeState", () => {
       composerState: {
         provider: "claude",
         model: "opus",
-        modelOptions: { reasoningEffort: "high" },
+        modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
         planMode: false,
       },
       providerDefaults: INITIAL_STATE.providerDefaults,
@@ -44,7 +44,7 @@ describe("resolvePlanModeState", () => {
     expect(result.lockedComposerState).toEqual({
       provider: "claude",
       model: "opus",
-      modelOptions: { reasoningEffort: "high" },
+      modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
       planMode: true,
     })
   })
@@ -64,14 +64,14 @@ describe("resolvePlanModeState", () => {
         ...INITIAL_STATE.providerDefaults,
         claude: {
           model: "sonnet",
-          modelOptions: { reasoningEffort: "max" },
+          modelOptions: { reasoningEffort: "max", contextWindow: "200k" },
           planMode: true,
         },
       },
       lockedComposerState: {
         provider: "claude",
         model: "opus",
-        modelOptions: { reasoningEffort: "high" },
+        modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
         planMode: true,
       },
     })
@@ -80,7 +80,7 @@ describe("resolvePlanModeState", () => {
     expect(result.lockedComposerState).toEqual({
       provider: "claude",
       model: "opus",
-      modelOptions: { reasoningEffort: "high" },
+      modelOptions: { reasoningEffort: "high", contextWindow: "200k" },
       planMode: false,
     })
   })

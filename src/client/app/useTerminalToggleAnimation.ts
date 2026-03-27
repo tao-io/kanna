@@ -35,6 +35,18 @@ type ResolvedTerminalAnimationState = {
   targetLayout: [number, number]
 }
 
+export function shouldRequestTerminalFocus(args: {
+  previousProjectId: string | null
+  projectId: string | null
+  showTerminalPane: boolean
+  wasTerminalVisible: boolean
+}) {
+  const didProjectChange = args.previousProjectId !== null && args.previousProjectId !== args.projectId
+  const isInitialProjectMount = args.previousProjectId === null && args.projectId !== null
+
+  return !didProjectChange && !isInitialProjectMount && args.showTerminalPane && !args.wasTerminalVisible
+}
+
 export function resolveTerminalAnimationState({
   previousProjectId,
   projectId,
@@ -79,14 +91,18 @@ export function useTerminalToggleAnimation({
 
   useEffect(() => {
     const previousProjectId = previousProjectIdRef.current
-    const didProjectChange = previousProjectId !== null && previousProjectId !== projectId
     const wasVisible = previousFocusedTerminalVisibilityRef.current
 
-    if (!didProjectChange && showTerminalPane && !wasVisible) {
+    if (shouldRequestTerminalFocus({
+      previousProjectId,
+      projectId,
+      showTerminalPane,
+      wasTerminalVisible: wasVisible,
+    })) {
       setTerminalFocusRequestVersion((current) => current + 1)
     }
 
-    if (!didProjectChange && !showTerminalPane && wasVisible) {
+    if (previousProjectId !== null && previousProjectId === projectId && !showTerminalPane && wasVisible) {
       chatInputRef.current?.focus({ preventScroll: true })
     }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { easeInOutCubic, interpolateLayout } from "./terminalToggleAnimation"
-import { resolveTerminalAnimationState } from "./useTerminalToggleAnimation"
+import { resolveTerminalAnimationState, shouldRequestTerminalFocus } from "./useTerminalToggleAnimation"
 
 describe("terminalToggleAnimation", () => {
   test("clamps easing at the ends", () => {
@@ -78,5 +78,23 @@ describe("terminalToggleAnimation", () => {
     expect(result.shouldSkipAnimation).toBe(true)
     expect(result.currentLayout).toEqual([68, 32])
     expect(result.targetLayout).toEqual([60, 40])
+  })
+
+  test("does not request terminal focus on the initial chat mount when the terminal is already open", () => {
+    expect(shouldRequestTerminalFocus({
+      previousProjectId: null,
+      projectId: "project-1",
+      showTerminalPane: true,
+      wasTerminalVisible: false,
+    })).toBe(false)
+  })
+
+  test("requests terminal focus only when the user opens the terminal after the project is already mounted", () => {
+    expect(shouldRequestTerminalFocus({
+      previousProjectId: "project-1",
+      projectId: "project-1",
+      showTerminalPane: true,
+      wasTerminalVisible: false,
+    })).toBe(true)
   })
 })

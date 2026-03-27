@@ -2,10 +2,12 @@ import { forwardRef, memo, useCallback, useEffect, useRef, useState } from "reac
 import { ArrowUp } from "lucide-react"
 import {
   type AgentProvider,
+  type ClaudeContextWindow,
   type ClaudeReasoningEffort,
   type CodexReasoningEffort,
   type ModelOptions,
   type ProviderCatalogEntry,
+  normalizeClaudeContextWindow,
 } from "../../../shared/types"
 import { Button } from "../ui/button"
 import { Textarea } from "../ui/textarea"
@@ -220,6 +222,27 @@ const ChatInputInner = forwardRef<HTMLTextAreaElement, Props>(function ChatInput
     setComposerModelOptions({ reasoningEffort: reasoningEffort as CodexReasoningEffort })
   }
 
+  function setClaudeContextWindow(contextWindow: ClaudeContextWindow) {
+    if (providerLocked) {
+      setLockedComposerState((current) => {
+        const next = current ?? createLockedComposerState(selectedProvider, composerState, providerDefaults)
+        if (next.provider !== "claude") return next
+        const normalizedContextWindow = normalizeClaudeContextWindow(next.model, contextWindow)
+        const { contextWindow: _unusedContextWindow, ...restModelOptions } = next.modelOptions
+        return {
+          ...next,
+          modelOptions: {
+            ...restModelOptions,
+            ...(normalizedContextWindow ? { contextWindow: normalizedContextWindow } : {}),
+          },
+        }
+      })
+      return
+    }
+
+    setComposerModelOptions({ contextWindow })
+  }
+
   function setEffectivePlanMode(planMode: boolean) {
     const nextState = resolvePlanModeState({
       providerLocked,
@@ -357,6 +380,19 @@ const ChatInputInner = forwardRef<HTMLTextAreaElement, Props>(function ChatInput
           if (providerLocked) {
             setLockedComposerState((current) => {
               const next = current ?? createLockedComposerState(selectedProvider, composerState, providerDefaults)
+              if (next.provider === "claude") {
+                const normalizedContextWindow = normalizeClaudeContextWindow(model, next.modelOptions.contextWindow)
+                const { contextWindow: _unusedContextWindow, ...restModelOptions } = next.modelOptions
+                return {
+                  ...next,
+                  model,
+                  modelOptions: {
+                    ...restModelOptions,
+                    ...(normalizedContextWindow ? { contextWindow: normalizedContextWindow } : {}),
+                  },
+                }
+              }
+
               return { ...next, model }
             })
             return
@@ -365,6 +401,7 @@ const ChatInputInner = forwardRef<HTMLTextAreaElement, Props>(function ChatInput
           setComposerModel(model)
         }}
         onClaudeReasoningEffortChange={(effort) => setReasoningEffort(effort)}
+        onClaudeContextWindowChange={(contextWindow) => setClaudeContextWindow(contextWindow)}
         onCodexReasoningEffortChange={(effort) => setReasoningEffort(effort)}
         onCodexFastModeChange={(fastMode) => {
           if (providerLocked) {

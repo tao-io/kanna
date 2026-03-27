@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware"
 import {
   DEFAULT_CLAUDE_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL_OPTIONS,
+  normalizeClaudeContextWindow,
   isClaudeReasoningEffort,
   isCodexReasoningEffort,
   type AgentProvider,
@@ -68,11 +69,13 @@ function normalizeClaudePreference(value?: {
       ? value.effort
       : DEFAULT_CLAUDE_MODEL_OPTIONS.reasoningEffort
   const model = value?.model ?? "opus"
+  const contextWindow = normalizeClaudeContextWindow(model, value?.modelOptions?.contextWindow)
 
   return {
     model,
     modelOptions: {
       reasoningEffort: model !== "opus" && normalizedEffort === "max" ? "high" : normalizedEffort,
+      ...(contextWindow ? { contextWindow } : {}),
     },
     planMode: Boolean(value?.planMode),
   }
@@ -412,7 +415,7 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
     }),
     {
       name: "chat-preferences",
-      version: 2,
+      version: 3,
       migrate: (persistedState) => migrateChatPreferencesState(persistedState as Partial<PersistedChatPreferencesState> | undefined),
     }
   )

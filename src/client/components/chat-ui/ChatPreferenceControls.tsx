@@ -1,9 +1,11 @@
 import { useState, type ComponentType, type SVGProps } from "react"
-import { Brain, Gauge, ListTodo, LockOpen, Sparkles, Zap } from "lucide-react"
+import { Box, Brain, Gauge, ListTodo, LockOpen, Sparkles, SquareMenu, SquareMinus } from "lucide-react"
 import {
+  CLAUDE_CONTEXT_WINDOW_OPTIONS,
   CLAUDE_REASONING_OPTIONS,
   CODEX_REASONING_OPTIONS,
   type AgentProvider,
+  type ClaudeContextWindow,
   type ClaudeModelOptions,
   type ClaudeReasoningEffort,
   type CodexModelOptions,
@@ -48,13 +50,13 @@ export const PROVIDER_ICONS: Record<AgentProvider, IconComponent> = {
   codex: OpenAIIcon,
 }
 
-export const MODEL_ICON_BY_ID: Record<string, typeof Sparkles> = {
-  opus: Brain,
-  sonnet: Sparkles,
-  haiku: Zap,
-  "gpt-5.4": Brain,
-  "gpt-5.3-codex": Sparkles,
-  "gpt-5.3-codex-spark": Zap,
+export const MODEL_ICON_BY_ID: Record<string, typeof Box> = {
+  opus: Box,
+  sonnet: Box,
+  haiku: Box,
+  "gpt-5.4": Box,
+  "gpt-5.3-codex": Box,
+  "gpt-5.3-codex-spark": Box,
 }
 
 export function PopoverMenuItem({
@@ -148,6 +150,7 @@ interface ChatPreferenceControlsProps {
   onProviderChange?: (provider: AgentProvider) => void
   onModelChange: (provider: AgentProvider, model: string) => void
   onClaudeReasoningEffortChange: (effort: ClaudeReasoningEffort) => void
+  onClaudeContextWindowChange: (contextWindow: ClaudeContextWindow) => void
   onCodexReasoningEffortChange: (effort: CodexReasoningEffort) => void
   onCodexFastModeChange: (fastMode: boolean) => void
   planMode?: boolean
@@ -166,6 +169,7 @@ export function ChatPreferenceControls({
   onProviderChange,
   onModelChange,
   onClaudeReasoningEffortChange,
+  onClaudeContextWindowChange,
   onCodexReasoningEffortChange,
   onCodexFastModeChange,
   planMode = false,
@@ -175,9 +179,13 @@ export function ChatPreferenceControls({
 }: ChatPreferenceControlsProps) {
   const providerConfig = availableProviders.find((provider) => provider.id === selectedProvider) ?? availableProviders[0]
   const ProviderIcon = PROVIDER_ICONS[selectedProvider]
-  const ModelIcon = MODEL_ICON_BY_ID[model] ?? Sparkles
+  const ModelIcon = MODEL_ICON_BY_ID[model] ?? Box
   const showPlanMode = includePlanMode && providerConfig?.supportsPlanMode && onPlanModeChange
+  const claudeModelOptions = selectedProvider === "claude" ? modelOptions as ClaudeModelOptions : null
   const codexModelOptions = selectedProvider === "codex" ? modelOptions as CodexModelOptions : null
+  const contextWindowOptions = providerConfig.models.find((candidate) => candidate.id === model)?.contextWindowOptions ?? []
+  const selectedContextWindow = claudeModelOptions?.contextWindow ?? CLAUDE_CONTEXT_WINDOW_OPTIONS[0].id
+  const ContextWindowIcon = selectedContextWindow === "1m" ? SquareMenu : SquareMinus
 
   return (
     <div className={cn("flex justify-center items-center gap-0.5", className)}>
@@ -237,7 +245,7 @@ export function ChatPreferenceControls({
       <InputPopover
         trigger={(
           <>
-            <Gauge className="h-3.5 w-3.5" />
+            <Brain className="h-3.5 w-3.5" />
             <span>{
               selectedProvider === "claude"
                 ? CLAUDE_REASONING_OPTIONS.find((effort) => effort.id === modelOptions.reasoningEffort)?.label ?? modelOptions.reasoningEffort
@@ -256,7 +264,7 @@ export function ChatPreferenceControls({
                   close()
                 }}
                 selected={modelOptions.reasoningEffort === effort.id}
-                icon={<Gauge className="h-4 w-4 text-muted-foreground" />}
+                icon={<Brain className="h-4 w-4 text-muted-foreground" />}
                 label={effort.label}
                 disabled={effort.id === "max" && model !== "opus"}
               />
@@ -269,18 +277,47 @@ export function ChatPreferenceControls({
                   close()
                 }}
                 selected={modelOptions.reasoningEffort === effort.id}
-                icon={<Gauge className="h-4 w-4 text-muted-foreground" />}
+                icon={<Brain className="h-4 w-4 text-muted-foreground" />}
                 label={effort.label}
               />
             ))
         )}
       </InputPopover>
 
+      {selectedProvider === "claude" && contextWindowOptions.length > 1 ? (
+        <InputPopover
+          trigger={(
+            <>
+              <ContextWindowIcon className="h-3.5 w-3.5" />
+              <span>{contextWindowOptions.find((option) => option.id === selectedContextWindow)?.label ?? selectedContextWindow}</span>
+            </>
+          )}
+        >
+          {(close) => contextWindowOptions.map((option) => (
+            <PopoverMenuItem
+              key={option.id}
+                onClick={() => {
+                  onClaudeContextWindowChange(option.id)
+                  close()
+                }}
+                selected={selectedContextWindow === option.id}
+                icon={option.id === "1m"
+                  ? <SquareMenu className="h-4 w-4 text-muted-foreground" />
+                  : <SquareMinus className="h-4 w-4 text-muted-foreground" />}
+                label={option.label}
+                description={option.id === "1m" ? "Expanded context window" : "Standard context window"}
+              />
+          ))}
+        </InputPopover>
+      ) : null}
+
       {selectedProvider === "codex" ? (
         <InputPopover
           trigger={(
             <>
-              {codexModelOptions?.fastMode ? <Zap className="h-3.5 w-3.5" /> : <Gauge className="h-3.5 w-3.5" />}
+              {codexModelOptions?.fastMode
+                ? <Gauge className="h-3.5 w-3.5" />
+                : <Gauge className="h-3.5 w-3.5 -scale-x-100" />}
               <span>{codexModelOptions?.fastMode ? "Fast Mode" : "Standard"}</span>
             </>
           )}
@@ -294,7 +331,7 @@ export function ChatPreferenceControls({
                   close()
                 }}
                 selected={!codexModelOptions?.fastMode}
-                icon={<Gauge className="h-4 w-4 text-muted-foreground" />}
+                icon={<Gauge className="h-4 w-4 text-muted-foreground -scale-x-100" />}
                 label="Standard"
               />
               <PopoverMenuItem
@@ -303,7 +340,7 @@ export function ChatPreferenceControls({
                   close()
                 }}
                 selected={Boolean(codexModelOptions?.fastMode)}
-                icon={<Zap className="h-4 w-4 text-muted-foreground" />}
+                icon={<Gauge className="h-4 w-4 text-muted-foreground" />}
                 label="Fast Mode"
               />
             </>

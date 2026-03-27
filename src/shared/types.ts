@@ -7,10 +7,16 @@ export interface ProviderModelOption {
   id: string
   label: string
   supportsEffort: boolean
+  contextWindowOptions?: readonly ProviderContextWindowOption[]
 }
 
 export interface ProviderEffortOption {
   id: string
+  label: string
+}
+
+export interface ProviderContextWindowOption {
+  id: ClaudeContextWindow
   label: string
 }
 
@@ -31,10 +37,12 @@ export const CODEX_REASONING_OPTIONS = [
 
 export type ClaudeReasoningEffort = (typeof CLAUDE_REASONING_OPTIONS)[number]["id"]
 export type CodexReasoningEffort = (typeof CODEX_REASONING_OPTIONS)[number]["id"]
+export type ClaudeContextWindow = "200k" | "1m"
 export type ServiceTier = "fast"
 
 export interface ClaudeModelOptions {
   reasoningEffort: ClaudeReasoningEffort
+  contextWindow?: ClaudeContextWindow
 }
 
 export interface CodexModelOptions {
@@ -53,6 +61,7 @@ export type ModelOptions = Partial<{
 
 export const DEFAULT_CLAUDE_MODEL_OPTIONS = {
   reasoningEffort: "high",
+  contextWindow: "200k",
 } as const satisfies ClaudeModelOptions
 
 export const DEFAULT_CODEX_MODEL_OPTIONS = {
@@ -66,6 +75,15 @@ export function isClaudeReasoningEffort(value: unknown): value is ClaudeReasonin
 
 export function isCodexReasoningEffort(value: unknown): value is CodexReasoningEffort {
   return CODEX_REASONING_OPTIONS.some((option) => option.id === value)
+}
+
+export const CLAUDE_CONTEXT_WINDOW_OPTIONS = [
+  { id: "200k", label: "200k" },
+  { id: "1m", label: "1M" },
+] as const satisfies readonly ProviderContextWindowOption[]
+
+export function isClaudeContextWindow(value: unknown): value is ClaudeContextWindow {
+  return CLAUDE_CONTEXT_WINDOW_OPTIONS.some((option) => option.id === value)
 }
 
 export interface ProviderCatalogEntry {
@@ -86,8 +104,8 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
     defaultEffort: "high",
     supportsPlanMode: true,
     models: [
-      { id: "opus", label: "Opus", supportsEffort: true },
-      { id: "sonnet", label: "Sonnet", supportsEffort: true },
+      { id: "opus", label: "Opus", supportsEffort: true, contextWindowOptions: [...CLAUDE_CONTEXT_WINDOW_OPTIONS] },
+      { id: "sonnet", label: "Sonnet", supportsEffort: true, contextWindowOptions: [...CLAUDE_CONTEXT_WINDOW_OPTIONS] },
       { id: "haiku", label: "Haiku", supportsEffort: true },
     ],
     efforts: [...CLAUDE_REASONING_OPTIONS],
@@ -112,6 +130,26 @@ export function getProviderCatalog(provider: AgentProvider): ProviderCatalogEntr
     throw new Error(`Unknown provider: ${provider}`)
   }
   return entry
+}
+
+export function getClaudeModelOption(modelId: string): ProviderModelOption | undefined {
+  return getProviderCatalog("claude").models.find((candidate) => candidate.id === modelId)
+}
+
+export function getClaudeContextWindowOptions(modelId: string): readonly ProviderContextWindowOption[] {
+  return getClaudeModelOption(modelId)?.contextWindowOptions ?? []
+}
+
+export function normalizeClaudeContextWindow(modelId: string, contextWindow?: unknown): ClaudeContextWindow | undefined {
+  const options = getClaudeContextWindowOptions(modelId)
+  if (options.length === 0) return undefined
+  return options.some((option) => option.id === contextWindow)
+    ? contextWindow as ClaudeContextWindow
+    : DEFAULT_CLAUDE_MODEL_OPTIONS.contextWindow
+}
+
+export function resolveClaudeApiModelId(modelId: string, contextWindow?: ClaudeContextWindow): string {
+  return contextWindow === "1m" ? `${modelId}[1m]` : modelId
 }
 
 export type KannaStatus =

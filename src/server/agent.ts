@@ -19,6 +19,7 @@ import {
   normalizeCodexModelOptions,
   normalizeServerModel,
 } from "./provider-catalog"
+import { resolveClaudeApiModelId } from "../shared/types"
 
 const CLAUDE_TOOLSET = [
   "Skill",
@@ -365,9 +366,10 @@ export class AgentCoordinator {
   private getProviderSettings(provider: AgentProvider, command: Extract<ClientCommand, { type: "chat.send" }>) {
     const catalog = getServerProviderCatalog(provider)
     if (provider === "claude") {
-      const modelOptions = normalizeClaudeModelOptions(command.modelOptions, command.effort)
+      const model = normalizeServerModel(provider, command.model)
+      const modelOptions = normalizeClaudeModelOptions(model, command.modelOptions, command.effort)
       return {
-        model: normalizeServerModel(provider, command.model),
+        model: resolveClaudeApiModelId(model, modelOptions.contextWindow),
         effort: modelOptions.reasoningEffort,
         serviceTier: undefined,
         planMode: catalog.supportsPlanMode ? Boolean(command.planMode) : false,

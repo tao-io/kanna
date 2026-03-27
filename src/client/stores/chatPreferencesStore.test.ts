@@ -14,7 +14,7 @@ describe("migrateChatPreferencesState", () => {
       providerDefaults: {
         claude: {
           model: "opus",
-          modelOptions: { reasoningEffort: "low" },
+          modelOptions: { reasoningEffort: "low", contextWindow: "1m" },
           planMode: true,
         },
         codex: {
@@ -26,7 +26,7 @@ describe("migrateChatPreferencesState", () => {
       composerState: {
         provider: "claude",
         model: "sonnet",
-        modelOptions: { reasoningEffort: "max" },
+        modelOptions: { reasoningEffort: "max", contextWindow: "1m" },
         planMode: false,
       },
     })
@@ -36,7 +36,7 @@ describe("migrateChatPreferencesState", () => {
       providerDefaults: {
         claude: {
           model: "opus",
-          modelOptions: { reasoningEffort: "low" },
+          modelOptions: { reasoningEffort: "low", contextWindow: "1m" },
           planMode: true,
         },
         codex: {
@@ -48,9 +48,36 @@ describe("migrateChatPreferencesState", () => {
       composerState: {
         provider: "claude",
         model: "sonnet",
-        modelOptions: { reasoningEffort: "high" },
+        modelOptions: { reasoningEffort: "high", contextWindow: "1m" },
         planMode: false,
       },
+    })
+  })
+
+  test("drops unsupported Claude context window selections during migration", () => {
+    const migrated = migrateChatPreferencesState({
+      defaultProvider: "last_used",
+      providerDefaults: {
+        claude: {
+          model: "haiku",
+          modelOptions: { reasoningEffort: "low", contextWindow: "1m" as never },
+          planMode: false,
+        },
+      },
+      composerState: {
+        provider: "claude",
+        model: "haiku",
+        modelOptions: { reasoningEffort: "high", contextWindow: "1m" as never },
+        planMode: false,
+      },
+    })
+
+    expect(migrated.providerDefaults.claude.modelOptions).toEqual({ reasoningEffort: "low" })
+    expect(migrated.composerState).toEqual({
+      provider: "claude",
+      model: "haiku",
+      modelOptions: { reasoningEffort: "high" },
+      planMode: false,
     })
   })
 })
@@ -75,17 +102,29 @@ describe("chat preference store", () => {
 
   test("editing composer state does not change provider defaults", () => {
     useChatPreferencesStore.getState().setComposerModel("sonnet")
-    useChatPreferencesStore.getState().setComposerModelOptions({ reasoningEffort: "low" })
+    useChatPreferencesStore.getState().setComposerModelOptions({ reasoningEffort: "low", contextWindow: "1m" })
     useChatPreferencesStore.getState().setComposerPlanMode(true)
 
     const state = useChatPreferencesStore.getState()
     expect(state.composerState).toEqual({
       provider: "claude",
       model: "sonnet",
-      modelOptions: { reasoningEffort: "low" },
+      modelOptions: { reasoningEffort: "low", contextWindow: "1m" },
       planMode: true,
     })
     expect(state.providerDefaults).toEqual(INITIAL_STATE.providerDefaults)
+  })
+
+  test("switching Claude composer model clears unsupported context window values", () => {
+    useChatPreferencesStore.getState().setComposerModelOptions({ contextWindow: "1m" })
+    useChatPreferencesStore.getState().setComposerModel("haiku")
+
+    expect(useChatPreferencesStore.getState().composerState).toEqual({
+      provider: "claude",
+      model: "haiku",
+      modelOptions: { reasoningEffort: "high" },
+      planMode: false,
+    })
   })
 
   test("resetComposerFromProvider copies provider defaults into composer state", () => {
