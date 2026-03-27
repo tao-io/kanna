@@ -120,13 +120,19 @@ export function MetaText({ children }: { children: ReactNode }) {
 
 // Expandable row with chevron
 interface ExpandableRowProps {
-  children: ReactNode
-  expandedContent: ReactNode
+  children: ReactNode | ((expanded: boolean) => ReactNode)
+  expandedContent: ReactNode | ((expanded: boolean) => ReactNode)
   defaultExpanded?: boolean
 }
 
 export function ExpandableRow({ children, expandedContent, defaultExpanded = false }: ExpandableRowProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
+  const resolvedChildren = typeof children === "function"
+    ? (children as (expanded: boolean) => ReactNode)(expanded)
+    : children
+  const resolvedExpandedContent = typeof expandedContent === "function"
+    ? (expandedContent as (expanded: boolean) => ReactNode)(expanded)
+    : expandedContent
 
   return (
     <div className="flex flex-col w-full">
@@ -136,13 +142,13 @@ export function ExpandableRow({ children, expandedContent, defaultExpanded = fal
         className={`group/expandable-row cursor-pointer grid grid-cols-[auto_1fr] items-center gap-1 text-sm ${!expanded ? "hover:opacity-60 transition-opacity" : ""}`}
       >
         <div className="grid grid-cols-[auto_1fr] items-center gap-1.5">
-          {children}
+          {resolvedChildren}
         </div>
         <ChevronRight
           className={`h-4.5 w-4.5 text-muted-icon translate-y-[0.5px] transition-all duration-200 opacity-0 group-hover/expandable-row:opacity-100 ${expanded ? "rotate-90 opacity-100" : ""}`}
         />
       </button>
-      {expanded && expandedContent}
+      {expanded && resolvedExpandedContent}
     </div>
   )
 }

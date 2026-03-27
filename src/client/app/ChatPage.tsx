@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { ArrowDown, Flower } from "lucide-react"
-import { useOutletContext } from "react-router-dom"
+import { useLocation, useNavigate, useOutletContext } from "react-router-dom"
 import { ChatInput } from "../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../components/chat-ui/ChatNavbar"
 import { RightSidebar } from "../components/chat-ui/RightSidebar"
 import { TerminalWorkspace } from "../components/chat-ui/TerminalWorkspace"
 import { ProcessingMessage } from "../components/messages/ProcessingMessage"
+import { TodoWriteMessage } from "../components/messages/TodoWriteMessage"
 import { Card, CardContent } from "../components/ui/card"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable"
 import { ScrollArea } from "../components/ui/scroll-area"
@@ -25,19 +26,26 @@ import { useTerminalToggleAnimation } from "./useTerminalToggleAnimation"
 import type { KannaState } from "./useKannaState"
 import { KannaTranscript } from "./KannaTranscript"
 import { useStickyChatFocus } from "./useStickyChatFocus"
+import { shouldAutoScrollChatToBottom } from "../pwa"
+import type { HydratedTranscriptMessage } from "../../shared/types"
 
 const EMPTY_STATE_TEXT = "What are we building?"
-const EMPTY_STATE_TYPING_INTERVAL_MS = 19
 const CHAT_NAVBAR_OFFSET_PX = 72
 const SCROLL_BUTTON_BOTTOM_PX = 120
 
+function isTodoWriteMessage(
+  message: HydratedTranscriptMessage
+): message is Extract<HydratedTranscriptMessage, { kind: "tool"; toolKind: "todo_write" }> {
+  return message.kind === "tool" && message.toolKind === "todo_write"
+}
+
 export function ChatPage() {
   const state = useOutletContext<KannaState>()
+  const location = useLocation()
+  const navigate = useNavigate()
   const layoutRootRef = useRef<HTMLDivElement>(null)
   const chatCardRef = useRef<HTMLDivElement>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
-  const [typedEmptyStateText, setTypedEmptyStateText] = useState("")
-  const [isEmptyStateTypingComplete, setIsEmptyStateTypingComplete] = useState(false)
   const [fixedTerminalHeight, setFixedTerminalHeight] = useState(0)
   const projectId = state.runtime?.projectId ?? null
   const projectTerminalLayout = useTerminalLayoutStore((store) => (projectId ? store.projects[projectId] : undefined))
@@ -55,6 +63,18 @@ export function ChatPage() {
   const minColumnWidth = useTerminalPreferencesStore((store) => store.minColumnWidth)
   const keybindings = state.keybindings
   const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
+  const pinnedTodoMessage = useMemo(() => {
+    const latestTodoId = state.latestToolIds.TodoWrite
+    if (!latestTodoId) return null
+
+    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index]
+      if (message.id !== latestTodoId) continue
+      return isTodoWriteMessage(message) ? message : null
+    }
+
+    return null
+  }, [state.latestToolIds.TodoWrite, state.messages])
 
   const hasTerminals = terminalLayout.terminals.length > 0
   const showTerminalPane = Boolean(projectId && terminalLayout.isVisible && hasTerminals)
@@ -92,26 +112,6 @@ export function ChatPage() {
     enabled: state.hasSelectedProject && state.runtime?.status !== "waiting_for_user",
     canCancel: state.canCancel,
   })
-
-  useEffect(() => {
-    if (state.messages.length !== 0) return
-
-    setTypedEmptyStateText("")
-    setIsEmptyStateTypingComplete(false)
-
-    let characterIndex = 0
-    const interval = window.setInterval(() => {
-      characterIndex += 1
-      setTypedEmptyStateText(EMPTY_STATE_TEXT.slice(0, characterIndex))
-
-      if (characterIndex >= EMPTY_STATE_TEXT.length) {
-        window.clearInterval(interval)
-        setIsEmptyStateTypingComplete(true)
-      }
-    }, EMPTY_STATE_TYPING_INTERVAL_MS)
-
-    return () => window.clearInterval(interval)
-  }, [state.activeChatId, state.messages.length])
 
   useEffect(() => {
     function handleGlobalKeydown(event: KeyboardEvent) {
@@ -156,18 +156,6 @@ export function ChatPage() {
   }, [addTerminal, hasTerminals, projectId, resolvedKeybindings, toggleRightSidebar, toggleVisibility])
 
   useEffect(() => {
-    if (state.messages.length === 0) return
-
-    const frameId = window.requestAnimationFrame(() => {
-      const element = state.scrollRef.current
-      if (!element) return
-      element.scrollTo({ top: element.scrollHeight, behavior: "auto" })
-    })
-
-    return () => window.cancelAnimationFrame(frameId)
-  }, [state.messages.length, state.scrollRef])
-
-  useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
       state.updateScrollState()
     })
@@ -208,6 +196,24 @@ export function ChatPage() {
 
     return () => observer.disconnect()
   }, [projectId, shouldRenderTerminalLayout, terminalLayout.mainSizes])
+
+  useEffect(() => {
+    if (!shouldAutoScrollChatToBottom(location.search)) return
+    if (!state.activeChatId || !state.runtime) return
+
+    const frameId = window.requestAnimationFrame(() => {
+      state.scrollToBottom()
+    })
+    const timeoutId = window.setTimeout(() => {
+      state.scrollToBottom()
+      navigate({ pathname: location.pathname, search: "" }, { replace: true })
+    }, 150)
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.clearTimeout(timeoutId)
+    }
+  }, [location.pathname, location.search, navigate, state.activeChatId, state.runtime, state.scrollToBottom])
 
   const clampRightSidebarSize = (size: number) => {
     if (!Number.isFinite(size)) {
@@ -253,14 +259,20 @@ export function ChatPage() {
           onScroll={state.updateScrollState}
           className="flex-1 min-h-0 px-4 scroll-pt-[72px]"
         >
+          {state.loadingOlderMessages ? (
+            <div className="pt-[72px] pb-3 max-w-[800px] mx-auto text-xs text-muted-foreground">
+              Loading older messages...
+            </div>
+          ) : null}
           {state.messages.length === 0 ? <div style={{ height: state.transcriptPaddingBottom }} aria-hidden="true" /> : null}
           {state.messages.length > 0 ? (
             <>
-              <div className="animate-fade-in space-y-5 pt-[72px] max-w-[800px] mx-auto">
+              <div className="space-y-5 pt-[72px] max-w-[800px] mx-auto">
                 <KannaTranscript
                   messages={state.messages}
                   isLoading={state.isProcessing}
                   localPath={state.runtime?.localPath}
+                  scrollParent={state.scrollRef.current}
                   latestToolIds={state.latestToolIds}
                   onOpenLocalLink={state.handleOpenLocalLink}
                   onAskUserQuestionSubmit={state.handleAskUserQuestion}
@@ -281,7 +293,7 @@ export function ChatPage() {
         {state.messages.length === 0 ? (
           <div
             key={state.activeChatId ?? "new-chat"}
-            className="pointer-events-none absolute inset-x-4 animate-fade-in"
+            className="pointer-events-none absolute inset-x-4"
             style={{
               top: CHAT_NAVBAR_OFFSET_PX,
               bottom: state.transcriptPaddingBottom,
@@ -289,26 +301,12 @@ export function ChatPage() {
           >
             <div className="mx-auto flex h-full max-w-[800px] items-center justify-center">
               <div className="flex flex-col items-center justify-center text-muted-foreground gap-4 opacity-70">
-                <Flower strokeWidth={1.5} className="size-8 text-muted-foreground kanna-empty-state-flower"></Flower>
+                <Flower strokeWidth={1.5} className="size-8 text-muted-foreground" />
                 <div
-                  className="text-base font-normal text-muted-foreground text-center max-w-xs flex items-center kanna-empty-state-text"
+                  className="text-base font-normal text-muted-foreground text-center max-w-xs flex items-center"
                   aria-label={EMPTY_STATE_TEXT}
                 >
-                  <span className="relative inline-grid place-items-start">
-                    <span className="invisible col-start-1 row-start-1 whitespace-pre flex items-center">
-                      <span>{EMPTY_STATE_TEXT}</span>
-                      <span className="kanna-typewriter-cursor-slot" aria-hidden="true" />
-                    </span>
-                    <span className="col-start-1 row-start-1 whitespace-pre flex items-center">
-                      <span>{typedEmptyStateText}</span>
-                      <span className="kanna-typewriter-cursor-slot" aria-hidden="true">
-                        <span
-                          className="kanna-typewriter-cursor"
-                          data-typing-complete={isEmptyStateTypingComplete ? "true" : "false"}
-                        />
-                      </span>
-                    </span>
-                  </span>
+                  <span>{EMPTY_STATE_TEXT}</span>
                 </div>
               </div>
             </div>
@@ -335,6 +333,14 @@ export function ChatPage() {
 
       <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none">
         <div className="bg-gradient-to-t from-background via-background pointer-events-auto" ref={state.inputRef}>
+          {pinnedTodoMessage ? (
+            <div className="mx-auto max-w-[840px] px-3 pt-3 md:px-5">
+              <TodoWriteMessage
+                message={pinnedTodoMessage}
+                className="rounded-2xl shadow-lg shadow-black/5"
+              />
+            </div>
+          ) : null}
           <ChatInput
             ref={chatInputRef}
             key={state.activeChatId ?? "new-chat"}

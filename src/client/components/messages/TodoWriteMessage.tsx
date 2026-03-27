@@ -10,15 +10,16 @@ const STATUS_CONFIG = {
 
 interface Props {
   message: Extract<ProcessedToolCall, { toolKind: "todo_write" }>
+  className?: string
 }
 
-export function TodoWriteMessage({ message }: Props) {
+export function TodoWriteMessage({ message, className }: Props) {
   const todos = message.input.todos
 
   if (!todos.length) return null
 
   return (
-    <div className="w-full">
+    <div className={cn("w-full", className)}>
       <div className="rounded-2xl border border-border overflow-hidden">
         <h3 className="font-medium text-foreground text-sm p-3 px-4 bg-card border-b border-border flex items-center gap-2">
           <ListChecks className="h-4 w-4 text-muted-foreground" />

@@ -1,4 +1,5 @@
 import React, { useMemo } from "react"
+import { Virtuoso } from "react-virtuoso"
 import type { AskUserQuestionItem, ProcessedToolCall } from "../components/messages/types"
 import type { AskUserQuestionAnswerMap, HydratedTranscriptMessage } from "../../shared/types"
 import { UserMessage } from "../components/messages/UserMessage"
@@ -8,7 +9,6 @@ import { AccountInfoMessage } from "../components/messages/AccountInfoMessage"
 import { TextMessage } from "../components/messages/TextMessage"
 import { AskUserQuestionMessage } from "../components/messages/AskUserQuestionMessage"
 import { ExitPlanModeMessage } from "../components/messages/ExitPlanModeMessage"
-import { TodoWriteMessage } from "../components/messages/TodoWriteMessage"
 import { ToolCallMessage } from "../components/messages/ToolCallMessage"
 import { ResultMessage } from "../components/messages/ResultMessage"
 import { InterruptedMessage } from "../components/messages/InterruptedMessage"
@@ -64,6 +64,7 @@ interface KannaTranscriptProps {
   messages: HydratedTranscriptMessage[]
   isLoading: boolean
   localPath?: string
+  scrollParent?: HTMLElement | null
   latestToolIds: Record<string, string | null>
   onOpenLocalLink: (target: { path: string; line?: number; column?: number }) => void
   onAskUserQuestionSubmit: (
@@ -74,16 +75,19 @@ interface KannaTranscriptProps {
   onExitPlanModeConfirm: (toolUseId: string, confirmed: boolean, clearContext?: boolean, message?: string) => void
 }
 
-export function KannaTranscript({
+export const KannaTranscript = React.memo(function KannaTranscript({
   messages,
   isLoading,
   localPath,
+  scrollParent,
   latestToolIds,
   onOpenLocalLink,
   onAskUserQuestionSubmit,
   onExitPlanModeConfirm,
 }: KannaTranscriptProps) {
   const renderItems = useMemo(() => groupMessages(messages), [messages])
+  const firstSystemInitIndex = useMemo(() => messages.findIndex((entry) => entry.kind === "system_init"), [messages])
+  const firstAccountInfoIndex = useMemo(() => messages.findIndex((entry) => entry.kind === "account_info"), [messages])
 
   function renderMessage(message: HydratedTranscriptMessage, index: number): React.ReactNode {
     if (message.kind === "user_prompt") {
@@ -94,11 +98,11 @@ export function KannaTranscript({
       case "unknown":
         return <RawJsonMessage key={message.id} json={message.json} />
       case "system_init": {
-        const isFirst = messages.findIndex((entry) => entry.kind === "system_init") === index
+        const isFirst = firstSystemInitIndex === index
         return isFirst ? <SystemMessage key={message.id} message={message} rawJson={message.debugRaw} /> : null
       }
       case "account_info": {
-        const isFirst = messages.findIndex((entry) => entry.kind === "account_info") === index
+        const isFirst = firstAccountInfoIndex === index
         return isFirst ? <AccountInfoMessage key={message.id} message={message} /> : null
       }
       case "assistant_text":
@@ -125,8 +129,7 @@ export function KannaTranscript({
           )
         }
         if (message.toolKind === "todo_write") {
-          if (message.id !== latestToolIds.TodoWrite) return null
-          return <TodoWriteMessage key={message.id} message={message} />
+          return null
         }
         return (
           <ToolCallMessage
@@ -157,34 +160,49 @@ export function KannaTranscript({
     }
   }
 
+  function renderItem(item: RenderItem) {
+    if (item.type === "tool-group") {
+      return (
+        <div
+          key={`group-${item.startIndex}`}
+          className="group relative pb-5"
+          {...{ [CHAT_SELECTION_ZONE_ATTRIBUTE]: "" }}
+        >
+          <CollapsedToolGroup messages={item.messages} isLoading={isLoading} localPath={localPath} />
+        </div>
+      )
+    }
+
+    const rendered = renderMessage(item.message, item.index)
+    if (!rendered) return null
+    return (
+      <div
+        key={item.message.id}
+        id={`msg-${item.message.id}`}
+        className="group relative pb-5"
+        {...{ [CHAT_SELECTION_ZONE_ATTRIBUTE]: "" }}
+      >
+        {rendered}
+      </div>
+    )
+  }
+
   return (
     <OpenLocalLinkProvider onOpenLocalLink={onOpenLocalLink}>
-      {renderItems.map((item) => {
-        if (item.type === "tool-group") {
-          return (
-            <div
-              key={`group-${item.startIndex}`}
-              className="group relative"
-              {...{ [CHAT_SELECTION_ZONE_ATTRIBUTE]: "" }}
-            >
-              <CollapsedToolGroup messages={item.messages} isLoading={isLoading} localPath={localPath} />
-            </div>
-          )
-        }
-
-        const rendered = renderMessage(item.message, item.index)
-        if (!rendered) return null
-        return (
-          <div
-            key={item.message.id}
-            id={`msg-${item.message.id}`}
-            className="group relative"
-            {...{ [CHAT_SELECTION_ZONE_ATTRIBUTE]: "" }}
-          >
-            {rendered}
-          </div>
-        )
-      })}
+      <Virtuoso
+        customScrollParent={scrollParent ?? undefined}
+        data={renderItems}
+        increaseViewportBy={{ top: 600, bottom: 1200 }}
+        overscan={400}
+        computeItemKey={(index, item) => item.type === "tool-group" ? `group-${item.startIndex}` : item.message.id}
+        itemContent={(index, item) => renderItem(item)}
+      />
     </OpenLocalLinkProvider>
   )
-}
+}, (previous, next) => (
+  previous.messages === next.messages
+  && previous.isLoading === next.isLoading
+  && previous.localPath === next.localPath
+  && previous.scrollParent === next.scrollParent
+  && previous.latestToolIds === next.latestToolIds
+))
