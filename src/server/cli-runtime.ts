@@ -41,7 +41,10 @@ export type CliRunResult = StartedCli | RestartingCli | ExitedCli
 export interface CliRuntimeDeps {
   version: string
   bunVersion: string
-  startServer: (options: CliOptions & { update: CliUpdateOptions }) => Promise<{ port: number; stop: () => Promise<void> }>
+  startServer: (options: CliOptions & {
+    update: CliUpdateOptions
+    onMigrationProgress?: (message: string) => void
+  }) => Promise<{ port: number; stop: () => Promise<void> }>
   fetchLatestVersion: (packageName: string) => Promise<string>
   installVersion: (packageName: string, version: string) => UpdateInstallAttemptResult
   openUrl: (url: string) => void
@@ -218,6 +221,7 @@ export async function runCli(argv: string[], deps: CliRuntimeDeps): Promise<CliR
 
   const { port, stop } = await deps.startServer({
     ...parsedArgs.options,
+    onMigrationProgress: deps.log,
     update: {
       version: deps.version,
       fetchLatestVersion: deps.fetchLatestVersion,

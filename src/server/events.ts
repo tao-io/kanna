@@ -22,7 +22,6 @@ export interface StoreState {
   projectsById: Map<string, ProjectRecord>
   projectIdsByPath: Map<string, string>
   chatsById: Map<string, ChatRecord>
-  messagesByChatId: Map<string, TranscriptEntry[]>
 }
 
 export interface SnapshotFile {
@@ -30,7 +29,7 @@ export interface SnapshotFile {
   generatedAt: number
   projects: ProjectRecord[]
   chats: ChatRecord[]
-  messages: Array<{ chatId: string; entries: TranscriptEntry[] }>
+  messages?: Array<{ chatId: string; entries: TranscriptEntry[] }>
 }
 
 export type ProjectEvent = {
@@ -133,7 +132,6 @@ export function createEmptyState(): StoreState {
     projectsById: new Map(),
     projectIdsByPath: new Map(),
     chatsById: new Map(),
-    messagesByChatId: new Map(),
   }
 }
 

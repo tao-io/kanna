@@ -121,7 +121,7 @@ export function createWsRouter({
       id,
       snapshot: {
         type: "chat",
-        data: deriveChatSnapshot(store.state, agent.getActiveStatuses(), topic.chatId),
+        data: deriveChatSnapshot(store.state, agent.getActiveStatuses(), topic.chatId, (chatId) => store.getMessages(chatId)),
       },
     }
   }

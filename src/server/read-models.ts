@@ -8,7 +8,6 @@ import type {
   SidebarProjectGroup,
 } from "../shared/types"
 import type { ChatRecord, StoreState } from "./events"
-import { cloneTranscriptEntries } from "./events"
 import { resolveLocalPath } from "./paths"
 import { SERVER_PROVIDERS } from "./provider-catalog"
 
@@ -98,7 +97,8 @@ export function deriveLocalProjectsSnapshot(
 export function deriveChatSnapshot(
   state: StoreState,
   activeStatuses: Map<string, KannaStatus>,
-  chatId: string
+  chatId: string,
+  getMessages: (chatId: string) => ChatSnapshot["messages"]
 ): ChatSnapshot | null {
   const chat = state.chatsById.get(chatId)
   if (!chat || chat.deletedAt) return null
@@ -118,7 +118,7 @@ export function deriveChatSnapshot(
 
   return {
     runtime,
-    messages: cloneTranscriptEntries(state.messagesByChatId.get(chat.id) ?? []),
+    messages: getMessages(chat.id),
     availableProviders: [...SERVER_PROVIDERS],
   }
 }
