@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun"
 import { PROTOCOL_VERSION } from "../shared/types"
-import type { ChatEvent, ClientContext, ClientEnvelope, ServerEnvelope, SubscriptionTopic } from "../shared/protocol"
+import type { ClientContext, ClientEnvelope, ServerEnvelope, SubscriptionTopic } from "../shared/protocol"
 import { isClientEnvelope } from "../shared/protocol"
 import type { AgentCoordinator } from "./agent"
 import type { DiscoveredProject } from "./discovery"
