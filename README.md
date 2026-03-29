@@ -115,6 +115,7 @@ bun run build
 kanna                  # start with defaults (localhost only)
 kanna --port 4000      # custom port
 kanna --no-open        # don't open browser
+kanna --share          # create a public share URL + terminal QR
 ```
 
 Default URL: `http://localhost:3210`
@@ -132,6 +133,28 @@ kanna --host 100.64.x.x            # bind to a specific Tailscale IP
 
 When `--host <hostname>` is given, the browser opens `http://<hostname>:3210` automatically. Other machines on your network can connect to the same URL:
 
+### Public share link
+
+Use `--share` to create a temporary public `trycloudflare.com` URL and print a terminal QR code:
+
+```bash
+kanna --share
+kanna --share --port 4000
+```
+
+`--share` is incompatible with `--host` and `--remote`. It does not open a browser automatically; instead it prints:
+
+```text
+QR Code:
+...
+
+Public URL:
+https://<random>.trycloudflare.com
+
+Local URL:
+http://localhost:3210
+```
+
 ## Development
 
 ```bash
@@ -139,6 +162,15 @@ bun run dev
 ```
 
 The same `--remote` and `--host` flags can be used with `bun run dev` for remote development.
+`--share` is also supported in dev mode and exposes the Vite client URL publicly:
+
+```bash
+bun run dev --share
+bun run dev --port 3333 --share
+```
+
+In dev, `--port` sets the Vite client port and the backend runs on `port + 1`, so `bun run dev --port 3333 --share` publishes `http://localhost:3333`.
+`--share` remains incompatible with `--host` and `--remote`.
 Use `bun run dev --port 4000` to run the Vite client on `4000` and the backend on `4001`.
 
 Or run client and server separately:

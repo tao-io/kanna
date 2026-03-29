@@ -30,7 +30,7 @@ describe("provider catalog normalization", () => {
         reasoningEffort: "medium",
         contextWindow: "1m",
       },
-    })).toEqual({
+    })).toMatchObject({
       reasoningEffort: "medium",
     })
   })

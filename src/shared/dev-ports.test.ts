@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   DEFAULT_DEV_CLIENT_PORT,
   getDefaultDevServerPort,
+  parseDevArgs,
   resolveDevPorts,
   stripPortArg,
 } from "./dev-ports"
@@ -48,5 +49,36 @@ describe("stripPortArg", () => {
       "--host",
       "dev-box",
     ])
+  })
+})
+
+describe("parseDevArgs", () => {
+  test("derives dev share options from the client port", () => {
+    expect(parseDevArgs(["--share", "--port", "3333"], "dev-machine")).toEqual({
+      clientPort: 3333,
+      serverPort: 3334,
+      share: true,
+      backendTargetHost: "127.0.0.1",
+      allowedHosts: true,
+      serverArgs: [],
+    })
+  })
+
+  test("rejects combining --share with --host or --remote", () => {
+    expect(() => parseDevArgs(["--share", "--host", "dev-box"], "dev-machine")).toThrow("--share cannot be used with --host")
+    expect(() => parseDevArgs(["--host", "dev-box", "--share"], "dev-machine")).toThrow("--share cannot be used with --host")
+    expect(() => parseDevArgs(["--share", "--remote"], "dev-machine")).toThrow("--share cannot be used with --remote")
+    expect(() => parseDevArgs(["--remote", "--share"], "dev-machine")).toThrow("--share cannot be used with --remote")
+  })
+
+  test("preserves existing remote host behavior when share is off", () => {
+    expect(parseDevArgs(["--remote", "--port", "3333"], "dev-machine")).toEqual({
+      clientPort: 3333,
+      serverPort: 3334,
+      share: false,
+      backendTargetHost: "127.0.0.1",
+      allowedHosts: true,
+      serverArgs: ["--remote"],
+    })
   })
 })

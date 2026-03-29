@@ -52,7 +52,9 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
+    "cloudflared": "^0.7.1",
     "default-shell": "^2.2.0",
+    "qrcode": "^1.5.4",
     "react-resizable-panels": "^4.7.3"
   },
   "devDependencies": {
@@ -66,6 +68,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@types/bun": "latest",
     "@types/node": "^24.10.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
