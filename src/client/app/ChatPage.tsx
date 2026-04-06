@@ -414,7 +414,7 @@ export function ChatPage() {
 
         {shouldShowTranscriptToc ? (
           <div
-            className="absolute -mt-1 right-3 z-20"
+            className="absolute -mt-1 right-3 border border-border/0 border-[1px] z-20 bottom-0 overflow-y-auto pb-[110px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             style={{ top: CHAT_NAVBAR_OFFSET_PX }}
           >
             <div
