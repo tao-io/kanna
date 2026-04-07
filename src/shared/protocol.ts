@@ -78,6 +78,26 @@ export type ClientCommand =
       planMode?: boolean
     }
   | { type: "chat.refreshDiffs"; chatId: string }
+  | { type: "chat.listBranches"; chatId: string }
+  | { type: "chat.syncBranch"; chatId: string; action: "fetch" | "pull" | "publish" }
+  | {
+      type: "chat.checkoutBranch"
+      chatId: string
+      branch:
+      | { kind: "local"; name: string }
+      | { kind: "remote"; name: string; remoteRef: string }
+      | {
+          kind: "pull_request"
+          name: string
+          prNumber: number
+          headRefName: string
+          headRepoCloneUrl?: string
+          isCrossRepository?: boolean
+          remoteRef?: string
+        }
+      bringChanges?: boolean
+    }
+  | { type: "chat.createBranch"; chatId: string; name: string; baseBranchName?: string }
   | { type: "chat.generateCommitMessage"; chatId: string; paths: string[] }
   | { type: "chat.commitDiffs"; chatId: string; paths: string[]; summary: string; description?: string; mode: DiffCommitMode }
   | { type: "chat.discardDiffFile"; chatId: string; path: string }

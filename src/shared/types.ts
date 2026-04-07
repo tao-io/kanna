@@ -491,15 +491,102 @@ export interface ChatBranchHistorySnapshot {
   entries: ChatBranchHistoryEntry[]
 }
 
+export type ChatBranchListEntryKind = "local" | "remote" | "pull_request"
+
+export interface ChatBranchListEntry {
+  id: string
+  kind: ChatBranchListEntryKind
+  name: string
+  displayName: string
+  updatedAt?: string
+  description?: string
+  remoteRef?: string
+  prNumber?: number
+  prTitle?: string
+  headRefName?: string
+  headLabel?: string
+  headRepoCloneUrl?: string
+  isCrossRepository?: boolean
+}
+
+export interface ChatBranchListResult {
+  currentBranchName?: string
+  defaultBranchName?: string
+  recent: ChatBranchListEntry[]
+  local: ChatBranchListEntry[]
+  remote: ChatBranchListEntry[]
+  pullRequests: ChatBranchListEntry[]
+  pullRequestsStatus: "available" | "unavailable" | "error"
+  pullRequestsError?: string
+}
+
 export interface ChatDiffSnapshot {
   status: "unknown" | "ready" | "no_repo"
   branchName?: string
+  defaultBranchName?: string
+  originRepoSlug?: string
   hasUpstream?: boolean
+  aheadCount?: number
+  behindCount?: number
+  lastFetchedAt?: string
   files: ChatDiffFile[]
   branchHistory?: ChatBranchHistorySnapshot
 }
 
+export interface ChatSyncSuccess {
+  ok: true
+  action: "fetch" | "pull" | "publish"
+  branchName?: string
+  aheadCount?: number
+  behindCount?: number
+  snapshotChanged: boolean
+}
+
+export interface ChatSyncFailure {
+  ok: false
+  action: "fetch" | "pull" | "publish"
+  title: string
+  message: string
+  detail?: string
+  snapshotChanged?: boolean
+}
+
+export type ChatSyncResult = ChatSyncSuccess | ChatSyncFailure
+
 export type DiffCommitMode = "commit_and_push" | "commit_only"
+
+export interface ChatCheckoutBranchSuccess {
+  ok: true
+  branchName?: string
+  snapshotChanged: boolean
+}
+
+export interface ChatCheckoutBranchFailure {
+  ok: false
+  cancelled?: boolean
+  title: string
+  message: string
+  detail?: string
+  snapshotChanged?: boolean
+}
+
+export type ChatCheckoutBranchResult = ChatCheckoutBranchSuccess | ChatCheckoutBranchFailure
+
+export interface ChatCreateBranchSuccess {
+  ok: true
+  branchName: string
+  snapshotChanged: boolean
+}
+
+export interface ChatCreateBranchFailure {
+  ok: false
+  title: string
+  message: string
+  detail?: string
+  snapshotChanged?: boolean
+}
+
+export type ChatCreateBranchResult = ChatCreateBranchSuccess | ChatCreateBranchFailure
 
 export interface DiffCommitSuccess {
   ok: true

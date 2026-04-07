@@ -1,7 +1,15 @@
 import { PatchDiff } from "@pierre/diffs/react"
-import { Ban, Check, ChevronDown, ChevronUp, Code, Columns2, Copy, Ellipsis, Minus, Rows3, Trash2, WrapText, X } from "lucide-react"
+import { Ban, Check, ChevronDown, ChevronUp, Code, Columns2, Copy, Download, Ellipsis, GitBranch, GitPullRequest, LoaderCircle, Minus, RefreshCw, Rows3, Search, Trash2, Upload, WrapText } from "lucide-react"
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react"
-import type { ChatAttachment, ChatBranchHistoryEntry, ChatDiffSnapshot, DiffCommitMode, DiffCommitResult } from "../../../shared/types"
+import type {
+  ChatAttachment,
+  ChatBranchHistoryEntry,
+  ChatBranchListEntry,
+  ChatBranchListResult,
+  ChatDiffSnapshot,
+  DiffCommitMode,
+  DiffCommitResult,
+} from "../../../shared/types"
 import { useStickyState } from "../../hooks/useStickyState"
 import { cn } from "../../lib/utils"
 import { useDiffCommitStore } from "../../stores/diffCommitStore"
@@ -11,6 +19,7 @@ import { classifyAttachmentPreview } from "../messages/attachmentPreview"
 import { Button } from "../ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu"
 import { Input } from "../ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
 import { SegmentedControl } from "../ui/segmented-control"
 import { Textarea } from "../ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip"
@@ -52,8 +61,12 @@ interface RightSidebarProps {
   onIgnoreFile: (path: string) => void
   onCopyFilePath: (path: string) => void
   onCopyRelativePath: (path: string) => void
+  onListBranches: () => Promise<ChatBranchListResult>
+  onCheckoutBranch: (branch: ChatBranchListEntry) => Promise<void>
+  onCreateBranch: () => Promise<void>
   onGenerateCommitMessage: (args: { paths: string[] }) => Promise<{ subject: string; body: string }>
   onCommit: (args: { paths: string[]; summary: string; description: string; mode: DiffCommitMode }) => Promise<DiffCommitResult | null>
+  onSyncWithRemote: (action: "fetch" | "pull" | "publish") => Promise<unknown>
   onDiffRenderModeChange: (mode: DiffRenderMode) => void
   onWrapLinesChange: (wrap: boolean) => void
   onClose: () => void
@@ -156,32 +169,40 @@ function formatRelativeTime(isoTimestamp: string) {
     return ""
   }
 
-  const diffMs = timestamp - Date.now()
+  const diffMs = Date.now() - timestamp
   const minute = 60_000
   const hour = 60 * minute
   const day = 24 * hour
   const week = 7 * day
   const month = 30 * day
   const year = 365 * day
-  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" })
-  const absoluteDiff = Math.abs(diffMs)
 
-  if (absoluteDiff < hour) {
-    return formatter.format(Math.round(diffMs / minute), "minute")
+  if (diffMs < minute) {
+    return "just now"
   }
-  if (absoluteDiff < day) {
-    return formatter.format(Math.round(diffMs / hour), "hour")
+  if (diffMs < hour) {
+    return `${Math.round(diffMs / minute)}m ago`
   }
-  if (absoluteDiff < week) {
-    return formatter.format(Math.round(diffMs / day), "day")
+  if (diffMs < day) {
+    return `${Math.round(diffMs / hour)}hr ago`
   }
-  if (absoluteDiff < month) {
-    return formatter.format(Math.round(diffMs / week), "week")
+  if (diffMs < week) {
+    return `${Math.round(diffMs / day)}d ago`
   }
-  if (absoluteDiff < year) {
-    return formatter.format(Math.round(diffMs / month), "month")
+  if (diffMs < month) {
+    return `${Math.round(diffMs / week)}wk ago`
   }
-  return formatter.format(Math.round(diffMs / year), "year")
+  if (diffMs < year) {
+    return `${Math.round(diffMs / month)}mo ago`
+  }
+  return `${Math.round(diffMs / year)}yr ago`
+}
+
+function formatFetchTooltip(isoTimestamp?: string) {
+  if (!isoTimestamp) {
+    return "No local fetch recorded"
+  }
+  return `Last fetched ${formatRelativeTime(isoTimestamp)}`
 }
 
 function CommitHistoryRow({ entry }: { entry: ChatBranchHistoryEntry }) {
@@ -223,6 +244,196 @@ function CommitHistoryRow({ entry }: { entry: ChatBranchHistoryEntry }) {
         </div>
       ) : null}
     </button>
+  )
+}
+
+function BranchSwitcher({
+  currentBranchName,
+  onListBranches,
+  onCheckoutBranch,
+  onCreateBranch,
+}: {
+  currentBranchName?: string
+  onListBranches: () => Promise<ChatBranchListResult>
+  onCheckoutBranch: (branch: ChatBranchListEntry) => Promise<void>
+  onCreateBranch: () => Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [isMutating, setIsMutating] = useState(false)
+  const [query, setQuery] = useState("")
+  const [branchList, setBranchList] = useState<ChatBranchListResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    setIsLoading(true)
+    setError(null)
+    void onListBranches()
+      .then((result) => setBranchList(result))
+      .catch((loadError) => {
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      })
+      .finally(() => {
+        setIsLoading(false)
+      })
+  }, [onListBranches, open])
+
+  const normalizedQuery = query.trim().toLowerCase()
+  const filterEntries = (entries: ChatBranchListEntry[]) => entries.filter((entry) => {
+    if (!normalizedQuery) return true
+    return [
+      entry.displayName,
+      entry.name,
+      entry.description,
+      entry.prTitle,
+      entry.headLabel,
+    ].some((value) => value?.toLowerCase().includes(normalizedQuery))
+  })
+
+  const currentName = branchList?.currentBranchName ?? currentBranchName
+  const pullRequestHeadNames = new Set((branchList?.pullRequests ?? []).map((entry) => entry.headRefName ?? entry.name))
+  const recent = filterEntries(branchList?.recent ?? []).filter((entry) => entry.name !== currentName)
+  const local = filterEntries(branchList?.local ?? []).filter((entry) => entry.name !== currentName)
+  const remote = filterEntries(branchList?.remote ?? []).filter((entry) => entry.name !== currentName && !pullRequestHeadNames.has(entry.name))
+  const pullRequests = filterEntries(branchList?.pullRequests ?? []).filter((entry) => entry.name !== currentName)
+
+  async function handleCheckout(entry: ChatBranchListEntry) {
+    setIsMutating(true)
+    try {
+      await onCheckoutBranch(entry)
+      setOpen(false)
+      setQuery("")
+    } finally {
+      setIsMutating(false)
+    }
+  }
+
+  async function handleCreate() {
+    setIsMutating(true)
+    try {
+      await onCreateBranch()
+      setOpen(false)
+      setQuery("")
+    } finally {
+      setIsMutating(false)
+    }
+  }
+
+  function BranchSection({
+    title,
+    entries,
+    emptyLabel,
+  }: {
+    title: string
+    entries: ChatBranchListEntry[]
+    emptyLabel?: string
+  }) {
+    if (entries.length === 0 && !emptyLabel) {
+      return null
+    }
+
+    return (
+      <div className="space-y-1">
+        <div className="sticky top-0 z-10 bg-background px-1 py-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+          {title}
+        </div>
+        {entries.length === 0 ? (
+          <div className="px-1 py-1 text-xs text-muted-foreground">{emptyLabel}</div>
+        ) : (
+          entries.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              disabled={isMutating}
+              onClick={() => {
+                void handleCheckout(entry)
+              }}
+              className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-accent disabled:opacity-60"
+            >
+              {entry.kind === "pull_request"
+                ? <GitPullRequest className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                : <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+              <div className="min-w-0 flex-1">
+                <div className="flex w-full items-center gap-3">
+                  <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-sm text-foreground">{entry.displayName}</div>
+                  {entry.updatedAt ? (
+                    <div className="ml-auto shrink-0 text-right text-[11px] text-muted-foreground">
+                      {formatRelativeTime(entry.updatedAt)}
+                    </div>
+                  ) : null}
+                </div>
+                {entry.kind === "pull_request" && entry.description ? (
+                  <div className="truncate text-xs text-muted-foreground">
+                    {entry.description}
+                  </div>
+                ) : null}
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="flex min-w-0 max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          aria-label="Open branch switcher"
+        >
+          <GitBranch className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{currentBranchName ?? "Detached HEAD"}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[320px] p-2">
+        <div className="space-y-2">
+          <div className="flex items-center gap-1">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search branches"
+                className="h-8 pl-7 text-sm"
+                disabled={isLoading || isMutating}
+              />
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => void handleCreate()} disabled={isLoading || isMutating} className="h-8 px-2 text-xs hover:!bg-transparent hover:!border-border/0">
+              + New
+            </Button>
+          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              <span>Loading branches…</span>
+            </div>
+          ) : error ? (
+            <div className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground">{error}</div>
+          ) : (
+            <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1.5 -mr-[8px]">
+              <BranchSection title="Recent" entries={recent} emptyLabel="No recent branches." />
+              <BranchSection title="Local" entries={local} emptyLabel="No local branches." />
+              <BranchSection title="Remote" entries={remote} emptyLabel="No remote branches." />
+              <BranchSection
+                title="Pull Requests"
+                entries={pullRequests}
+                emptyLabel={
+                  branchList?.pullRequestsStatus === "error"
+                    ? branchList.pullRequestsError ?? "Could not load pull requests."
+                    : branchList?.pullRequestsStatus === "unavailable"
+                      ? "Pull requests unavailable for this repository."
+                      : "No open pull requests."
+                }
+              />
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -444,8 +655,12 @@ function RightSidebarImpl({
   onIgnoreFile,
   onCopyFilePath,
   onCopyRelativePath,
+  onListBranches,
+  onCheckoutBranch,
+  onCreateBranch,
   onGenerateCommitMessage,
   onCommit,
+  onSyncWithRemote,
   onDiffRenderModeChange,
   onWrapLinesChange,
   onClose,
@@ -459,6 +674,7 @@ function RightSidebarImpl({
   const [description, setDescription] = useState("")
   const [isGenerating, setIsGenerating] = useState(false)
   const [commitModeInFlight, setCommitModeInFlight] = useState<DiffCommitMode | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const filePaths = useMemo(() => diffs.files.map((file) => file.path), [diffs.files])
   const filePathsKey = useMemo(() => filePaths.join("\u0000"), [filePaths])
@@ -511,6 +727,26 @@ function RightSidebarImpl({
   const isCommitting = commitModeInFlight !== null
   const isBusy = isGenerating || isCommitting
   const branchHistory = diffs.branchHistory?.entries ?? []
+  const behindCount = diffs.behindCount ?? 0
+  const isPublishedBranch = diffs.hasUpstream === true
+  const isPublishableBranch = diffs.hasUpstream === false && Boolean(diffs.branchName)
+  const encodedBranchName = diffs.branchName
+    ? diffs.branchName.split("/").map((segment) => encodeURIComponent(segment)).join("/")
+    : null
+  const syncAction: "fetch" | "pull" | "publish" = isPublishableBranch
+    ? "publish"
+    : behindCount > 0
+      ? "pull"
+      : "fetch"
+  const compareUrl = diffs.originRepoSlug && encodedBranchName
+    ? `https://github.com/${diffs.originRepoSlug}/compare/${encodedBranchName}?expand=1`
+    : null
+  const canOpenPullRequest = Boolean(
+    isPublishedBranch
+    && compareUrl
+    && diffs.branchName
+    && diffs.branchName !== diffs.defaultBranchName
+  )
   const canGenerate = diffs.status === "ready"
     && selectedCount > 0
     && !isBusy
@@ -563,14 +799,90 @@ function RightSidebarImpl({
     void handleGenerate()
   }
 
+  async function handleSync() {
+    if (diffs.status !== "ready" || isSyncing) return
+    setIsSyncing(true)
+    try {
+      await onSyncWithRemote(syncAction)
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
   return (
     <div className="h-full min-h-0 border-l border-border bg-background md:min-w-[370px]">
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3 py-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="truncate text-xs text-muted-foreground">Diffs</div>
+            <BranchSwitcher
+              currentBranchName={diffs.branchName}
+              onListBranches={onListBranches}
+              onCheckoutBranch={onCheckoutBranch}
+              onCreateBranch={onCreateBranch}
+            />
           </div>
-         
+          {diffs.status === "ready" ? (
+            syncAction === "publish" ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleSync()}
+                disabled={isSyncing}
+                className="h-7 gap-1.5 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
+              >
+                {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                <span>Publish Branch</span>
+              </Button>
+            ) : (
+              <div className="flex items-center gap-1">
+                {syncAction === "fetch" ? (
+                  <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleSync()}
+                        disabled={isSyncing}
+                        className="h-7 gap-1.5 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
+                      >
+                        {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                        <span>Fetch</span>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{formatFetchTooltip(diffs.lastFetchedAt)}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void handleSync()}
+                    disabled={isSyncing}
+                    className="h-7 gap-1.5 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
+                  >
+                    {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    <span>Pull</span>
+                    <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-muted px-1 text-[10px] text-muted-foreground">
+                      {behindCount}
+                    </span>
+                  </Button>
+                )}
+                {canOpenPullRequest && compareUrl ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (typeof window === "undefined") return
+                      window.open(compareUrl, "_blank", "noopener,noreferrer")
+                    }}
+                    className="h-7 gap-1.5 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
+                  >
+                    <GitPullRequest className="h-3.5 w-3.5" />
+                    <span>Open PR</span>
+                  </Button>
+                ) : null}
+              </div>
+            )
+          ) : null}
         </div>
         <div className="relative min-h-0 flex-1">
           <div className="sticky top-0 z-30 pl-[14px] pr-[12px] pt-[6px] bg-gradient-to-b from-background to-transparent">

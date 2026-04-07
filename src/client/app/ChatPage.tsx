@@ -2,7 +2,16 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { measureElement, useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, Flower, Upload } from "lucide-react"
 import { useOutletContext } from "react-router-dom"
-import type { ChatDiffSnapshot, DiffCommitMode, DiffCommitResult } from "../../shared/types"
+import type {
+  ChatBranchListEntry,
+  ChatBranchListResult,
+  ChatCheckoutBranchResult,
+  ChatCreateBranchResult,
+  ChatDiffSnapshot,
+  ChatSyncResult,
+  DiffCommitMode,
+  DiffCommitResult,
+} from "../../shared/types"
 import { ChatInput, type ChatInputHandle } from "../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../components/chat-ui/ChatNavbar"
 import { RightSidebar } from "../components/chat-ui/RightSidebar"
@@ -776,6 +785,30 @@ export function ChatPage() {
     return result
   }, [dialog, refreshDiffs, state.socket])
 
+  const handleSyncBranch = useCallback(async (action: "fetch" | "pull" | "publish") => {
+    const chatId = activeChatIdRef.current
+    if (!chatId) {
+      return null
+    }
+
+    const result = await state.socket.command<ChatSyncResult>({
+      type: "chat.syncBranch",
+      chatId,
+      action,
+    })
+    if (result.snapshotChanged) {
+      refreshDiffs()
+    }
+    if (!result.ok) {
+      await dialog.alert({
+        title: result.title,
+        description: `${result.message}${result.detail ? `\n\n${result.detail}` : ""}`,
+        closeLabel: "OK",
+      })
+    }
+    return result
+  }, [dialog, refreshDiffs, state.socket])
+
   const handleGenerateCommitMessage = useCallback(async (args: { paths: string[] }) => {
     const chatId = activeChatIdRef.current
     if (!chatId) {
@@ -793,6 +826,141 @@ export function ChatPage() {
       body: result.body,
     }
   }, [state.socket])
+
+  const handleListBranches = useCallback(async () => {
+    const chatId = activeChatIdRef.current
+    if (!chatId) {
+      return {
+        recent: [],
+        local: [],
+        remote: [],
+        pullRequests: [],
+        pullRequestsStatus: "unavailable",
+      } satisfies ChatBranchListResult
+    }
+
+    return await state.socket.command<ChatBranchListResult>({
+      type: "chat.listBranches",
+      chatId,
+    })
+  }, [state.socket])
+
+  const handleCheckoutBranch = useCallback(async (branch: ChatBranchListEntry) => {
+    const chatId = activeChatIdRef.current
+    if (!chatId) {
+      return
+    }
+
+    let bringChanges = false
+    if ((state.chatDiffSnapshot?.files.length ?? 0) > 0) {
+      const confirmed = await dialog.confirm({
+        title: "Bring Changes?",
+        description: `You have uncommitted changes. Bring them to ${branch.name}?`,
+        confirmLabel: "Bring Changes",
+        cancelLabel: "Stay Here",
+      })
+      if (!confirmed) {
+        return
+      }
+      bringChanges = true
+    }
+
+    try {
+      const result = await state.socket.command<ChatCheckoutBranchResult>({
+        type: "chat.checkoutBranch",
+        chatId,
+        branch: branch.kind === "local"
+          ? { kind: "local", name: branch.name }
+          : branch.kind === "remote"
+            ? { kind: "remote", name: branch.name, remoteRef: branch.remoteRef ?? branch.displayName }
+            : {
+                kind: "pull_request",
+                name: branch.name,
+                prNumber: branch.prNumber ?? 0,
+                headRefName: branch.headRefName ?? branch.name,
+                headRepoCloneUrl: branch.headRepoCloneUrl,
+                isCrossRepository: branch.isCrossRepository,
+                remoteRef: branch.remoteRef,
+              },
+        bringChanges,
+      })
+
+      if (result.snapshotChanged) {
+        refreshDiffs()
+      }
+      if (!result.ok && !result.cancelled) {
+        await dialog.alert({
+          title: result.title,
+          description: `${result.message}${result.detail ? `\n\n${result.detail}` : ""}`,
+          closeLabel: "OK",
+        })
+      }
+    } catch (error) {
+      await dialog.alert({
+        title: "Checkout failed",
+        description: error instanceof Error ? error.message : String(error),
+        closeLabel: "OK",
+      })
+    }
+  }, [dialog, refreshDiffs, state.chatDiffSnapshot?.files.length, state.socket])
+
+  const handleCreateBranch = useCallback(async () => {
+    const chatId = activeChatIdRef.current
+    if (!chatId) {
+      return
+    }
+
+    const name = await dialog.prompt({
+      title: "New Branch",
+      description: "Enter a branch name.",
+      placeholder: "feature/my-branch",
+      confirmLabel: "Create",
+    })
+    if (!name) {
+      return
+    }
+
+    const branchList = await handleListBranches()
+    const currentBranchName = branchList.currentBranchName
+    const defaultBranchName = branchList.defaultBranchName
+
+    let baseBranchName = defaultBranchName
+    if (defaultBranchName && currentBranchName && defaultBranchName !== currentBranchName) {
+      const createFromDefault = await dialog.confirm({
+        title: "Branch Base",
+        description: `Create "${name}" from ${defaultBranchName} instead of ${currentBranchName}?`,
+        confirmLabel: `From ${defaultBranchName}`,
+        cancelLabel: `From ${currentBranchName}`,
+      })
+      baseBranchName = createFromDefault ? defaultBranchName : currentBranchName
+    }
+
+    try {
+      const result = await state.socket.command<ChatCreateBranchResult>({
+        type: "chat.createBranch",
+        chatId,
+        name,
+        baseBranchName,
+      })
+
+      if (result.snapshotChanged) {
+        refreshDiffs()
+      }
+      if (!result.ok) {
+        await dialog.alert({
+          title: result.title,
+          description: `${result.message}${result.detail ? `\n\n${result.detail}` : ""}`,
+          closeLabel: "OK",
+        })
+      }
+    } catch (error) {
+      await dialog.alert({
+        title: "Create branch failed",
+        description: error instanceof Error ? error.message : String(error),
+        closeLabel: "OK",
+      })
+    }
+  }, [dialog, handleListBranches, refreshDiffs, state.socket])
 
   const handleCloseRightSidebar = useCallback(() => {
     if (!projectId) return
@@ -1266,8 +1434,12 @@ export function ChatPage() {
                 onIgnoreFile={handleIgnoreDiffFile}
                 onCopyFilePath={handleCopyDiffFilePath}
                 onCopyRelativePath={handleCopyDiffRelativePath}
+                onListBranches={handleListBranches}
+                onCheckoutBranch={handleCheckoutBranch}
+                onCreateBranch={handleCreateBranch}
                 onGenerateCommitMessage={handleGenerateCommitMessage}
                 onCommit={handleCommitDiffs}
+                onSyncWithRemote={handleSyncBranch}
                 onDiffRenderModeChange={setDiffRenderMode}
                 onWrapLinesChange={setWrapDiffLines}
                 onClose={handleCloseRightSidebar}

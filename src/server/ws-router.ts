@@ -22,7 +22,7 @@ export interface ClientState {
 
 interface CreateWsRouterArgs {
   store: EventStore
-  diffStore?: Pick<DiffStore, "getSnapshot" | "refreshSnapshot" | "generateCommitMessage" | "commitFiles" | "discardFile" | "ignoreFile">
+  diffStore?: Pick<DiffStore, "getSnapshot" | "refreshSnapshot" | "listBranches" | "syncBranch" | "checkoutBranch" | "createBranch" | "generateCommitMessage" | "commitFiles" | "discardFile" | "ignoreFile">
   agent: AgentCoordinator
   terminals: TerminalManager
   keybindings: KeybindingsManager
@@ -57,8 +57,12 @@ export function createWsRouter({
 }: CreateWsRouterArgs) {
   const sockets = new Set<ServerWebSocket<ClientState>>()
   const resolvedDiffStore = diffStore ?? {
-    getSnapshot: () => ({ status: "unknown", branchName: undefined, hasUpstream: undefined, files: [] as const, branchHistory: { entries: [] as const } }),
+    getSnapshot: () => ({ status: "unknown", branchName: undefined, defaultBranchName: undefined, originRepoSlug: undefined, hasUpstream: undefined, aheadCount: undefined, behindCount: undefined, lastFetchedAt: undefined, files: [] as const, branchHistory: { entries: [] as const } }),
     refreshSnapshot: async () => false,
+    listBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" as const }),
+    syncBranch: async () => ({ ok: true, action: "fetch" as const, branchName: undefined, snapshotChanged: false }),
+    checkoutBranch: async () => ({ ok: true, branchName: undefined, snapshotChanged: false }),
+    createBranch: async () => ({ ok: true, branchName: "main", snapshotChanged: false }),
     generateCommitMessage: async () => ({ subject: "Update selected files", body: "", usedFallback: true, failureMessage: null }),
     commitFiles: async () => ({ ok: true, mode: "commit_only" as const, branchName: undefined, pushed: false, snapshotChanged: false }),
     discardFile: async () => ({ snapshotChanged: false }),
@@ -366,6 +370,83 @@ export function createWsRouter({
           const changed = await resolvedDiffStore.refreshSnapshot(command.chatId, project.localPath)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
           if (changed) {
+            broadcastSnapshots()
+          }
+          return
+        }
+        case "chat.listBranches": {
+          const chat = store.getChat(command.chatId)
+          if (!chat) {
+            throw new Error("Chat not found")
+          }
+          const project = store.getProject(chat.projectId)
+          if (!project) {
+            throw new Error("Project not found")
+          }
+          const result = await resolvedDiffStore.listBranches({
+            projectPath: project.localPath,
+          })
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          return
+        }
+        case "chat.checkoutBranch": {
+          const chat = store.getChat(command.chatId)
+          if (!chat) {
+            throw new Error("Chat not found")
+          }
+          const project = store.getProject(chat.projectId)
+          if (!project) {
+            throw new Error("Project not found")
+          }
+          const result = await resolvedDiffStore.checkoutBranch({
+            chatId: command.chatId,
+            projectPath: project.localPath,
+            branch: command.branch,
+            bringChanges: command.bringChanges,
+          })
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          if (result.snapshotChanged) {
+            broadcastSnapshots()
+          }
+          return
+        }
+        case "chat.syncBranch": {
+          const chat = store.getChat(command.chatId)
+          if (!chat) {
+            throw new Error("Chat not found")
+          }
+          const project = store.getProject(chat.projectId)
+          if (!project) {
+            throw new Error("Project not found")
+          }
+          const result = await resolvedDiffStore.syncBranch({
+            chatId: command.chatId,
+            projectPath: project.localPath,
+            action: command.action,
+          })
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          if (result.snapshotChanged) {
+            broadcastSnapshots()
+          }
+          return
+        }
+        case "chat.createBranch": {
+          const chat = store.getChat(command.chatId)
+          if (!chat) {
+            throw new Error("Chat not found")
+          }
+          const project = store.getProject(chat.projectId)
+          if (!project) {
+            throw new Error("Project not found")
+          }
+          const result = await resolvedDiffStore.createBranch({
+            chatId: command.chatId,
+            projectPath: project.localPath,
+            name: command.name,
+            baseBranchName: command.baseBranchName,
+          })
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          if (result.snapshotChanged) {
             broadcastSnapshots()
           }
           return

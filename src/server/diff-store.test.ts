@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { appendGitIgnoreEntry, DiffStore, extractGitHubRepoSlug } from "./diff-store"
+import { appendGitIgnoreEntry, DiffStore, extractGitHubRepoSlug, fetchGitHubPullRequests } from "./diff-store"
 
 async function run(command: string[], cwd: string) {
   const process = Bun.spawn(command, {
@@ -285,5 +285,187 @@ describe("DiffStore", () => {
       projectPath: repoRoot,
       path: "app.txt",
     })).rejects.toThrow("Only untracked files can be ignored from the diff viewer")
+  })
+
+  test("fetchGitHubPullRequests prefers gh api when available", async () => {
+    let requestedPath = ""
+
+    const pulls = await fetchGitHubPullRequests("acme/repo", {
+      ghApiImpl: async (path) => {
+        requestedPath = path
+        return [{ number: 7, title: "Fix bug", head: { ref: "feature/fix" } }]
+      },
+      fetchImpl: async () => {
+        throw new Error("fetch should not be used when gh succeeds")
+      },
+    })
+
+    expect(requestedPath).toBe("repos/acme/repo/pulls?state=open&per_page=50")
+    expect(pulls).toHaveLength(1)
+  })
+
+  test("fetchGitHubPullRequests falls back to fetch and sends the GitHub accept header", async () => {
+    let requestedUrl = ""
+    let requestedAcceptHeader = ""
+
+    const pulls = await fetchGitHubPullRequests("acme/repo", {
+      ghApiImpl: async () => null,
+      fetchImpl: async (input, init) => {
+        requestedUrl = String(input)
+        requestedAcceptHeader = String(new Headers(init?.headers).get("Accept"))
+        return new Response(JSON.stringify([{ number: 7, title: "Fix bug", head: { ref: "feature/fix" } }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      },
+    })
+
+    expect(requestedUrl).toBe("https://api.github.com/repos/acme/repo/pulls?state=open&per_page=50")
+    expect(requestedAcceptHeader).toBe("application/vnd.github+json")
+    expect(pulls).toHaveLength(1)
+  })
+
+  test("listBranches includes default branch, local and remote branches, and recent branches", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, "app.txt"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "init"], repoRoot)
+    await run(["git", "switch", "-c", "feature/recent"], repoRoot)
+    await run(["git", "switch", "-c", "feature/other"], repoRoot)
+    await run(["git", "switch", "feature/recent"], repoRoot)
+    await run(["git", "switch", "main"], repoRoot).catch(async () => run(["git", "switch", "master"], repoRoot))
+    await run(["git", "update-ref", "refs/remotes/origin/main", "HEAD"], repoRoot).catch(() => {})
+    await run(["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], repoRoot).catch(() => {})
+    await run(["git", "update-ref", "refs/remotes/origin/feature/remote", "HEAD"], repoRoot)
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+
+    const result = await store.listBranches({ projectPath: repoRoot })
+    expect(result.defaultBranchName).toBe("main")
+    expect(result.local.some((entry) => entry.name === "feature/recent")).toBe(true)
+    expect(result.remote.some((entry) => entry.remoteRef === "origin/feature/remote")).toBe(true)
+    expect(result.recent.some((entry) => entry.name === "feature/recent")).toBe(true)
+  })
+
+  test("listBranches hides remote PR head refs from the remote section", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, "app.txt"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "init"], repoRoot)
+    await run(["git", "remote", "add", "origin", "git@github.com:acme/repo.git"], repoRoot)
+    await run(["git", "remote", "add", "github-desktop-jane", "git@github.com:jane/repo.git"], repoRoot)
+    await run(["git", "update-ref", "refs/remotes/origin/main", "HEAD"], repoRoot).catch(() => {})
+    await run(["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], repoRoot).catch(() => {})
+    await run(["git", "update-ref", "refs/remotes/github-desktop-jane/feature/pr-branch", "HEAD"], repoRoot)
+    await run(["git", "update-ref", "refs/remotes/origin/feature/pr-branch", "HEAD"], repoRoot)
+    await run(["git", "update-ref", "refs/remotes/origin/feature/non-pr", "HEAD"], repoRoot)
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = Object.assign(
+      async () => new Response(JSON.stringify([
+        {
+          number: 42,
+          title: "PR branch",
+          head: {
+            ref: "feature/pr-branch",
+            label: "jane:feature/pr-branch",
+            repo: {
+              clone_url: "git@github.com:jane/repo.git",
+              full_name: "jane/repo",
+            },
+          },
+          base: {
+            ref: "main",
+          },
+        },
+      ]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+      { preconnect: originalFetch.preconnect.bind(originalFetch) }
+    ) as typeof fetch
+
+    try {
+      const store = new DiffStore(repoRoot)
+      await store.initialize()
+
+      const result = await store.listBranches({ projectPath: repoRoot })
+      expect(result.pullRequests.some((entry) => entry.prNumber === 42)).toBe(true)
+      expect(result.remote.some((entry) => entry.remoteRef === "github-desktop-jane/feature/pr-branch")).toBe(false)
+      expect(result.remote.some((entry) => entry.remoteRef === "origin/feature/pr-branch")).toBe(false)
+      expect(result.remote.some((entry) => entry.remoteRef === "origin/feature/non-pr")).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("checkoutBranch creates a local tracking branch from a remote branch", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, "app.txt"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "init"], repoRoot)
+    await run(["git", "remote", "add", "origin", "git@github.com:acme/repo.git"], repoRoot)
+    await run(["git", "update-ref", "refs/remotes/origin/feature/remote", "HEAD"], repoRoot)
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+    const result = await store.checkoutBranch({
+      chatId: "chat-1",
+      projectPath: repoRoot,
+      branch: { kind: "remote", name: "feature/remote", remoteRef: "origin/feature/remote" },
+    })
+
+    expect(result.ok).toBe(true)
+    expect((await run(["git", "branch", "--show-current"], repoRoot)).trim()).toBe("feature/remote")
+  })
+
+  test("checkoutBranch cancels when changes exist and bringChanges is false", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, "app.txt"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "init"], repoRoot)
+    await run(["git", "switch", "-c", "feature/other"], repoRoot)
+    await run(["git", "switch", "main"], repoRoot).catch(async () => run(["git", "switch", "master"], repoRoot))
+    await writeFile(path.join(repoRoot, "app.txt"), "changed\n", "utf8")
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+    const result = await store.checkoutBranch({
+      chatId: "chat-1",
+      projectPath: repoRoot,
+      branch: { kind: "local", name: "feature/other" },
+      bringChanges: false,
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.cancelled).toBe(true)
+    }
+  })
+
+  test("createBranch creates and checks out a branch from a chosen base", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, "app.txt"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "init"], repoRoot)
+    await run(["git", "switch", "-c", "feature/base"], repoRoot)
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+    const result = await store.createBranch({
+      chatId: "chat-1",
+      projectPath: repoRoot,
+      name: "feature/new",
+      baseBranchName: "feature/base",
+    })
+
+    expect(result.ok).toBe(true)
+    expect((await run(["git", "branch", "--show-current"], repoRoot)).trim()).toBe("feature/new")
   })
 })

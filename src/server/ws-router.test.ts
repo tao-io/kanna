@@ -677,8 +677,9 @@ describe("ws-router", () => {
 
     const discardCalls: Array<{ chatId: string; projectPath: string; path: string }> = []
     const diffStore = {
-      getSnapshot: () => ({ status: "ready" as const, files: [] }),
+      getSnapshot: () => ({ status: "ready" as const, files: [], defaultBranchName: "main", originRepoSlug: "acme/repo", aheadCount: 0, behindCount: 0, lastFetchedAt: undefined }),
       refreshSnapshot: async () => false,
+      syncBranch: async () => ({ ok: true as const, action: "fetch" as const, snapshotChanged: false }),
       generateCommitMessage: async () => ({ subject: "", body: "" }),
       commitFiles: async () => ({ ok: true as const, mode: "commit_only" as const, pushed: false, snapshotChanged: false }),
       discardFile: async (args: { chatId: string; projectPath: string; path: string }) => {
@@ -781,8 +782,9 @@ describe("ws-router", () => {
         getProject: (projectId: string) => state.projectsById.get(projectId) ?? null,
       } as never,
       diffStore: {
-        getSnapshot: () => ({ status: "ready" as const, files: [] }),
+        getSnapshot: () => ({ status: "ready" as const, files: [], defaultBranchName: "main", originRepoSlug: "acme/repo", aheadCount: 0, behindCount: 0, lastFetchedAt: undefined }),
         refreshSnapshot: async () => false,
+        syncBranch: async () => ({ ok: true as const, action: "fetch" as const, snapshotChanged: false }),
         generateCommitMessage: async () => ({ subject: "", body: "" }),
         commitFiles: async () => ({ ok: true as const, mode: "commit_only" as const, pushed: false, snapshotChanged: false }),
         discardFile: async () => ({ snapshotChanged: false }),
