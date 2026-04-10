@@ -3,6 +3,7 @@ import {
   countMatchingUserPrompts,
   getActiveChatSnapshot,
   getNewestRemainingChatId,
+  getPreviousPrompt,
   getUserPromptSignature,
   getUiUpdateRestartReconnectAction,
   reconcileOptimisticUserPrompts,
@@ -239,6 +240,37 @@ describe("getActiveChatSnapshot", () => {
     }
 
     expect(getActiveChatSnapshot(snapshot, "chat-new")).toBeNull()
+  })
+})
+
+describe("getPreviousPrompt", () => {
+  test("returns the latest non-empty user prompt", () => {
+    expect(getPreviousPrompt([
+      {
+        kind: "assistant_text",
+        text: "hello",
+        id: "assistant-1",
+        timestamp: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        kind: "user_prompt",
+        content: "first prompt",
+        id: "user-1",
+        timestamp: "2024-01-01T00:00:01.000Z",
+      },
+      {
+        kind: "user_prompt",
+        content: "   ",
+        id: "user-2",
+        timestamp: "2024-01-01T00:00:02.000Z",
+      },
+      {
+        kind: "user_prompt",
+        content: "second prompt",
+        id: "user-3",
+        timestamp: "2024-01-01T00:00:03.000Z",
+      },
+    ])).toBe("second prompt")
   })
 })
 

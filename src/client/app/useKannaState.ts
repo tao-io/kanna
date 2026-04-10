@@ -56,6 +56,7 @@ function sameDiffs(left: ChatDiffSnapshot | null | undefined, right: ChatDiffSna
   if (left.status !== right.status) return false
   if (left.branchName !== right.branchName) return false
   if (left.defaultBranchName !== right.defaultBranchName) return false
+  if (left.hasOriginRemote !== right.hasOriginRemote) return false
   if (left.originRepoSlug !== right.originRepoSlug) return false
   if (left.hasUpstream !== right.hasUpstream) return false
   if (left.aheadCount !== right.aheadCount) return false
@@ -123,6 +124,16 @@ function mergeTranscriptEntries(olderHistoryEntries: TranscriptEntry[], recentEn
     deduped.set(entry._id, entry)
   }
   return [...deduped.values()]
+}
+
+export function getPreviousPrompt(messages: ReturnType<typeof processTranscriptMessages>) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.kind === "user_prompt" && message.content.trim().length > 0) {
+      return message.content
+    }
+  }
+  return null
 }
 
 const NEW_CHAT_OPTIMISTIC_SCOPE = "__new_chat__"
@@ -354,6 +365,7 @@ export interface KannaState {
   scrollRef: RefObject<HTMLDivElement | null>
   inputRef: RefObject<HTMLDivElement | null>
   messages: ReturnType<typeof processTranscriptMessages>
+  previousPrompt: string | null
   latestToolIds: ReturnType<typeof getLatestToolIds>
   runtime: ChatSnapshot["runtime"] | null
   isHistoryLoading: boolean
@@ -731,6 +743,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     [optimisticTranscriptEntries, serverTranscriptEntries]
   )
   const messages = useMemo(() => processTranscriptMessages(transcriptEntries), [transcriptEntries])
+  const previousPrompt = useMemo(() => getPreviousPrompt(messages), [messages])
   const latestToolIds = useMemo(() => getLatestToolIds(messages), [messages])
   const runtime = activeChatSnapshot?.runtime ?? null
   const availableProviders = activeChatSnapshot?.availableProviders ?? PROVIDERS
@@ -1224,6 +1237,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     scrollRef,
     inputRef,
     messages,
+    previousPrompt,
     latestToolIds,
     runtime,
     isHistoryLoading,

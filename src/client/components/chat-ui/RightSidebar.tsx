@@ -1483,7 +1483,7 @@ function RightSidebarImpl({
   const aheadCount = diffs.aheadCount ?? 0
   const isPublishedBranch = diffs.hasUpstream === true
   const isPublishableBranch = diffs.hasUpstream === false && Boolean(diffs.branchName)
-  const hasRemoteOrigin = Boolean(diffs.originRepoSlug)
+  const hasRemoteOrigin = diffs.hasOriginRemote === true
   const encodedBranchName = diffs.branchName
     ? diffs.branchName.split("/").map((segment) => encodeURIComponent(segment)).join("/")
     : null
@@ -1508,7 +1508,7 @@ function RightSidebarImpl({
     && selectedCount > 0
     && hasSummary
     && !isBusy
-  const primaryCommitMode: DiffCommitMode = "commit_and_push"
+  const primaryCommitMode: DiffCommitMode = hasRemoteOrigin ? "commit_and_push" : "commit_only"
   const resolvedBranchName = diffs.branchName ?? "current branch"
 
   async function handleCommit(mode: DiffCommitMode) {
@@ -1886,10 +1886,12 @@ function RightSidebarImpl({
                               {hasSummary ? (
                                 isCommitting ? (
                                   <LoaderCircle strokeWidth={2.5} className="size-3 shrink-0 animate-spin" />
-                                ) : diffs.hasUpstream ? (
+                                ) : primaryCommitMode === "commit_and_push" ? diffs.hasUpstream ? (
                                   <Upload strokeWidth={2.5} className="size-3 shrink-0" />
                                 ) : (
                                   <GitBranchPlus strokeWidth={2.5} className="size-3 shrink-0" />
+                                ) : (
+                                  <Check strokeWidth={2.5} className="size-3 shrink-0" />
                                 )
                               ) : isGenerating ? (
                                 <LoaderCircle strokeWidth={2.5} className="size-3 shrink-0 animate-spin" />
@@ -1900,7 +1902,9 @@ function RightSidebarImpl({
                                 {hasSummary
                                   ? (isCommitting
                                     ? (commitModeInFlight === "commit_only" ? "Committing..." : "Committing & Pushing...")
-                                    : diffs.hasUpstream
+                                    : primaryCommitMode === "commit_only"
+                                      ? <>Commit to <GitBranch strokeWidth={2.5} className="mr-[4.5px] ml-0.5 inline size-3 " />{resolvedBranchName}</>
+                                      : diffs.hasUpstream
                                       ? <>Commit &amp; push to <GitBranch strokeWidth={2.5} className="mr-[4.5px] ml-0.5 inline size-3 " />{resolvedBranchName}</>
                                       : <>Commit &amp; publish <GitBranch strokeWidth={2.5} className="mr-[4.5px] ml-0.5 inline size-3 " />{resolvedBranchName}</>)
                                   : (isGenerating

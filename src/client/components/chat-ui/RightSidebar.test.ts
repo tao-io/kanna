@@ -69,6 +69,7 @@ describe("RightSidebar", () => {
           branchName: "main",
           defaultBranchName: "main",
           behindCount: 3,
+          hasOriginRemote: true,
           hasUpstream: true,
           originRepoSlug: "acme/repo",
           files: [{
@@ -196,6 +197,7 @@ describe("RightSidebar", () => {
           status: "ready",
           branchName: "feature/branch-switcher",
           defaultBranchName: "main",
+          hasOriginRemote: true,
           hasUpstream: true,
           originRepoSlug: "acme/repo",
           files: [],

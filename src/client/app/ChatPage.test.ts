@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   getIgnoreFolderEntryFromDiffPath,
   hasFileDragTypes,
+  shouldAutoFollowTranscriptResize,
 } from "./ChatPage"
 
 describe("hasFileDragTypes", () => {
@@ -25,5 +26,19 @@ describe("getIgnoreFolderEntryFromDiffPath", () => {
 
   test("returns null for repo root files", () => {
     expect(getIgnoreFolderEntryFromDiffPath("scratch.log")).toBeNull()
+  })
+})
+
+describe("shouldAutoFollowTranscriptResize", () => {
+  test("keeps auto-follow enabled while the scroll button is hidden", () => {
+    expect(shouldAutoFollowTranscriptResize(false, 0, 1_000)).toBe(true)
+  })
+
+  test("keeps auto-follow enabled briefly after chat selection", () => {
+    expect(shouldAutoFollowTranscriptResize(true, 2_000, 1_500)).toBe(true)
+  })
+
+  test("stops forcing auto-follow after the selection window expires", () => {
+    expect(shouldAutoFollowTranscriptResize(true, 2_000, 2_000)).toBe(false)
   })
 })

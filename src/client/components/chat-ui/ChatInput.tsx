@@ -110,6 +110,7 @@ interface Props {
   activeProvider: AgentProvider | null
   availableProviders: ProviderCatalogEntry[]
   contextWindowSnapshot?: ContextWindowSnapshot | null
+  previousPrompt?: string | null
 }
 
 export interface ChatInputHandle {
@@ -166,6 +167,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   activeProvider,
   availableProviders,
   contextWindowSnapshot = null,
+  previousPrompt = null,
 }, forwardedRef) {
   const {
     getDraft,
@@ -541,6 +543,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (event.key === "Escape" && canCancel) {
       event.preventDefault()
       onCancel?.()
+      return
+    }
+
+    if (event.key === "ArrowUp" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && value.length === 0 && previousPrompt) {
+      event.preventDefault()
+      setValue(previousPrompt)
+      if (chatId) setDraft(chatId, previousPrompt)
       return
     }
 

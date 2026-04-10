@@ -148,6 +148,52 @@ describe("DiffStore", () => {
     expect((await run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], repoRoot)).trim()).toBe("origin/feature/publish-me")
   })
 
+  test("commit_and_push degrades to a local commit when origin is missing", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, "app.txt"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "init"], repoRoot)
+    await writeFile(path.join(repoRoot, "app.txt"), "changed\n", "utf8")
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+    await store.refreshSnapshot("project-1", repoRoot)
+
+    const result = await store.commitFiles({
+      projectId: "project-1",
+      projectPath: repoRoot,
+      paths: ["app.txt"],
+      summary: "Local only",
+      mode: "commit_and_push",
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      mode: "commit_and_push",
+      pushed: false,
+    })
+    expect((await run(["git", "log", "-1", "--pretty=%s"], repoRoot)).trim()).toBe("Local only")
+  })
+
+  test("refreshSnapshot reports origin presence before the first commit", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await run(["git", "remote", "add", "origin", "https://github.com/jakemor/test224.git"], repoRoot)
+    await writeFile(path.join(repoRoot, "poem.md"), "rose\n", "utf8")
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+    await store.refreshSnapshot("project-1", repoRoot)
+
+    expect(store.getProjectSnapshot("project-1")).toMatchObject({
+      status: "ready",
+      branchName: "main",
+      hasOriginRemote: true,
+      originRepoSlug: "jakemor/test224",
+    })
+  })
+
   test("detects renamed files", async () => {
     const repoRoot = await createRepo()
     tempDirs.push(repoRoot)

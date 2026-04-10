@@ -56,6 +56,7 @@ const SCROLL_BUTTON_BOTTOM_PX = 120
 const DIFF_REFRESH_INTERVAL_MS = 5_000
 const EMPTY_DIFF_SNAPSHOT: ChatDiffSnapshot = { status: "unknown", files: [] }
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 12
+const CHAT_SELECTION_AUTOFOLLOW_WINDOW_MS = 600
 
 export function getIgnoreFolderEntryFromDiffPath(filePath: string) {
   const normalized = filePath.replaceAll("\\", "/").replace(/\/+/g, "/").replace(/\/$/u, "")
@@ -64,6 +65,14 @@ export function getIgnoreFolderEntryFromDiffPath(filePath: string) {
     return null
   }
   return `${normalized.slice(0, lastSlashIndex)}/`
+}
+
+export function shouldAutoFollowTranscriptResize(
+  showScrollButton: boolean,
+  selectionAutoFollowUntil: number,
+  now = Date.now()
+) {
+  return !showScrollButton || now < selectionAutoFollowUntil
 }
 
 function serializeBranchSelection(branch: ChatBranchListEntry) {
@@ -152,6 +161,7 @@ function sameContextWindowSnapshot(left: ContextWindowSnapshot | null, right: Co
 }
 
 interface ChatTranscriptViewportProps {
+  activeChatId: string | null
   scrollRef: KannaState["scrollRef"]
   messages: KannaState["messages"]
   transcriptPaddingBottom: number
@@ -178,6 +188,7 @@ interface ChatTranscriptViewportProps {
 }
 
 const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
+  activeChatId,
   scrollRef,
   messages,
   transcriptPaddingBottom,
@@ -205,6 +216,7 @@ const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
   const contentRootRef = useRef<HTMLDivElement>(null)
   const previousRowCountRef = useRef(0)
   const pendingPrependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  const selectionAutoFollowUntilRef = useRef(0)
   const [transcriptContentWidth, setTranscriptContentWidth] = useState<number | null>(null)
   const [toolGroupExpanded, setToolGroupExpanded] = useState<Record<string, boolean>>({})
 
@@ -251,6 +263,10 @@ const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
   })
 
   useEffect(() => {
+    selectionAutoFollowUntilRef.current = Date.now() + CHAT_SELECTION_AUTOFOLLOW_WINDOW_MS
+  }, [activeChatId])
+
+  useEffect(() => {
     const contentRoot = contentRootRef.current
     if (!contentRoot) return
 
@@ -268,7 +284,13 @@ const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
         return nextWidth
       })
 
-      if (!showScrollButton && !pendingPrependAnchorRef.current) {
+      if (
+        shouldAutoFollowTranscriptResize(
+          showScrollButton,
+          selectionAutoFollowUntilRef.current
+        )
+        && !pendingPrependAnchorRef.current
+      ) {
         const scrollContainer = scrollRef.current
         if (scrollContainer) {
           scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: "auto" })
@@ -337,7 +359,7 @@ const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
     if (!scrollContainer) return
 
     scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: "auto" })
-  }, [isProcessing, resolvedRows.length, scrollRef, showScrollButton, transcriptContentWidth])
+  }, [activeChatId, isProcessing, resolvedRows.length, scrollRef, showScrollButton, transcriptContentWidth])
 
   const handleTranscriptScroll = useCallback(() => {
     onScrollChange()
@@ -502,6 +524,7 @@ interface ChatInputDockProps {
   chatInputRef: RefObject<ChatInputHandle | null>
   chatInputElementRef: RefObject<HTMLTextAreaElement | null>
   activeChatId: string | null
+  previousPrompt: string | null
   hasSelectedProject: boolean
   runtimeStatus: string | null
   canCancel: boolean
@@ -518,6 +541,7 @@ const ChatInputDock = memo(function ChatInputDock({
   chatInputRef,
   chatInputElementRef,
   activeChatId,
+  previousPrompt,
   hasSelectedProject,
   runtimeStatus,
   canCancel,
@@ -544,6 +568,7 @@ const ChatInputDock = memo(function ChatInputDock({
           activeProvider={activeProvider}
           availableProviders={availableProviders}
           contextWindowSnapshot={contextWindowSnapshot}
+          previousPrompt={previousPrompt}
         />
       </div>
     </div>
@@ -1623,6 +1648,7 @@ export function ChatPage() {
           gitStatus={state.chatDiffSnapshot?.status}
         />
         <ChatTranscriptViewport
+          activeChatId={state.activeChatId}
           scrollRef={state.scrollRef}
           messages={state.messages}
           transcriptPaddingBottom={state.transcriptPaddingBottom}
@@ -1654,6 +1680,7 @@ export function ChatPage() {
         chatInputRef={chatInputRef}
         chatInputElementRef={chatInputElementRef}
         activeChatId={state.activeChatId}
+        previousPrompt={state.previousPrompt}
         hasSelectedProject={state.hasSelectedProject}
         runtimeStatus={state.runtime?.status ?? null}
         canCancel={state.canCancel}
