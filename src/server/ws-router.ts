@@ -15,6 +15,28 @@ import { deriveChatSnapshot, deriveLocalProjectsSnapshot, deriveSidebarData } fr
 
 const DEFAULT_CHAT_RECENT_LIMIT = 200
 
+function isSendToStartingProfilingEnabled() {
+  return process.env.KANNA_PROFILE_SEND_TO_STARTING === "1"
+}
+
+function logSendToStartingProfile(
+  traceId: string | null | undefined,
+  startedAt: number | null | undefined,
+  stage: string,
+  details?: Record<string, unknown>
+) {
+  if (!traceId || startedAt === undefined || startedAt === null || !isSendToStartingProfilingEnabled()) {
+    return
+  }
+
+  console.log("[kanna/send->starting][server]", JSON.stringify({
+    traceId,
+    stage,
+    elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
+    ...details,
+  }))
+}
+
 export interface ClientState {
   subscriptions: Map<string, SubscriptionTopic>
   snapshotSignatures: Map<string, string>
@@ -225,6 +247,14 @@ export function createWsRouter({
         continue
       }
       snapshotSignatures.set(id, signature)
+      if (topic.type === "chat" && envelope.snapshot.type === "chat" && envelope.snapshot.data?.runtime.status === "starting") {
+        const profile = agent.getActiveTurnProfile(topic.chatId)
+        logSendToStartingProfile(profile?.traceId, profile?.startedAt, "ws.snapshot_sent", {
+          chatId: topic.chatId,
+          status: envelope.snapshot.data.runtime.status,
+          messageCount: envelope.snapshot.data.messages.length,
+        })
+      }
       send(ws, envelope)
     }
   }
@@ -437,6 +467,12 @@ export function createWsRouter({
         }
         case "chat.send": {
           const result = await agent.send(command)
+          const profile = command.clientTraceId && result.chatId
+            ? agent.getActiveTurnProfile(result.chatId)
+            : null
+          logSendToStartingProfile(profile?.traceId ?? command.clientTraceId, profile?.startedAt, "ws.chat_send_ack", {
+            chatId: result.chatId ?? null,
+          })
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
           break
         }
