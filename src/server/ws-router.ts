@@ -37,6 +37,53 @@ function logSendToStartingProfile(
   }))
 }
 
+function countSubscriptionsByTopic(ws: ServerWebSocket<ClientState>) {
+  let sidebar = 0
+  let chat = 0
+  let projectGit = 0
+  let localProjects = 0
+  let update = 0
+  let keybindings = 0
+  let terminal = 0
+
+  for (const topic of ws.data.subscriptions.values()) {
+    switch (topic.type) {
+      case "sidebar":
+        sidebar += 1
+        break
+      case "chat":
+        chat += 1
+        break
+      case "project-git":
+        projectGit += 1
+        break
+      case "local-projects":
+        localProjects += 1
+        break
+      case "update":
+        update += 1
+        break
+      case "keybindings":
+        keybindings += 1
+        break
+      case "terminal":
+        terminal += 1
+        break
+    }
+  }
+
+  return {
+    total: ws.data.subscriptions.size,
+    sidebar,
+    chat,
+    projectGit,
+    localProjects,
+    update,
+    keybindings,
+    terminal,
+  }
+}
+
 export interface ClientState {
   subscriptions: Map<string, SubscriptionTopic>
   snapshotSignatures: Map<string, string>
@@ -102,9 +149,13 @@ export function createWsRouter({
   }
 
   function getProtectedChatIds() {
+    const activeStatuses = agent.getActiveStatuses()
+    const drainingChatIds = typeof agent.getDrainingChatIds === "function"
+      ? agent.getDrainingChatIds()
+      : new Set<string>()
     return new Set([
-      ...agent.getActiveStatuses().keys(),
-      ...agent.getDrainingChatIds().values(),
+      ...activeStatuses.keys(),
+      ...drainingChatIds.values(),
     ])
   }
 
@@ -127,21 +178,48 @@ export function createWsRouter({
   }
 
   async function maybePruneStaleEmptyChats(extraSockets?: Iterable<ServerWebSocket<ClientState>>) {
-    await store.pruneStaleEmptyChats?.({
-      activeChatIds: getProtectedChatIds(),
-      protectedChatIds: getProtectedDraftChatIds(extraSockets),
+    const startedAt = performance.now()
+    const activeChatIds = getProtectedChatIds()
+    const protectedDraftChatIds = getProtectedDraftChatIds(extraSockets)
+    const prunedChatIds = await store.pruneStaleEmptyChats?.({
+      activeChatIds,
+      protectedChatIds: protectedDraftChatIds,
     })
+    if (isSendToStartingProfilingEnabled()) {
+      console.log("[kanna/send->starting][server]", JSON.stringify({
+        stage: "ws.prune_stale_empty_chats",
+        elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
+        activeChatCount: activeChatIds.size,
+        protectedDraftChatCount: protectedDraftChatIds.size,
+        prunedCount: prunedChatIds?.length ?? 0,
+        totalChatCount: store.state.chatsById.size,
+        totalProjectCount: store.state.projectsById.size,
+      }))
+    }
   }
 
   function createEnvelope(id: string, topic: SubscriptionTopic): ServerEnvelope {
     if (topic.type === "sidebar") {
+      const startedAt = performance.now()
+      const data = deriveSidebarData(store.state, agent.getActiveStatuses())
+      if (isSendToStartingProfilingEnabled()) {
+        const totalChats = data.projectGroups.reduce((count, group) => count + group.chats.length, 0)
+        console.log("[kanna/send->starting][server]", JSON.stringify({
+          stage: "ws.sidebar_snapshot_built",
+          elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
+          projectGroupCount: data.projectGroups.length,
+          chatCount: totalChats,
+          totalChatCount: store.state.chatsById.size,
+          totalProjectCount: store.state.projectsById.size,
+        }))
+      }
       return {
         v: PROTOCOL_VERSION,
         type: "snapshot",
         id,
         snapshot: {
           type: "sidebar",
-          data: deriveSidebarData(store.state, agent.getActiveStatuses()),
+          data,
         },
       }
     }
@@ -237,10 +315,13 @@ export function createWsRouter({
   }
 
   async function pushSnapshots(ws: ServerWebSocket<ClientState>, options?: { skipPrune?: boolean }) {
+    const pushStartedAt = performance.now()
     if (!options?.skipPrune) {
       await maybePruneStaleEmptyChats([ws])
     }
     const snapshotSignatures = ensureSnapshotSignatures(ws)
+    let sentCount = 0
+    let skippedCount = 0
     for (const [id, topic] of ws.data.subscriptions.entries()) {
       const envelopeStartedAt = performance.now()
       const envelope = createEnvelope(id, topic)
@@ -249,6 +330,7 @@ export function createWsRouter({
       const signature = JSON.stringify(envelope.snapshot)
       const signatureReadyAt = performance.now()
       if (snapshotSignatures.get(id) === signature) {
+        skippedCount += 1
         continue
       }
       snapshotSignatures.set(id, signature)
@@ -264,6 +346,7 @@ export function createWsRouter({
         })
       }
       const payloadBytes = send(ws, envelope)
+      sentCount += 1
       if (topic.type === "chat" && envelope.snapshot.type === "chat" && envelope.snapshot.data?.runtime.status === "starting") {
         const profile = agent.getActiveTurnProfile(topic.chatId)
         logSendToStartingProfile(profile?.traceId, profile?.startedAt, "ws.snapshot_send_completed", {
@@ -272,12 +355,36 @@ export function createWsRouter({
         })
       }
     }
+    if (isSendToStartingProfilingEnabled()) {
+      console.log("[kanna/send->starting][server]", JSON.stringify({
+        stage: "ws.push_snapshots_completed",
+        elapsedMs: Number((performance.now() - pushStartedAt).toFixed(1)),
+        skipPrune: Boolean(options?.skipPrune),
+        sentCount,
+        skippedCount,
+        ...countSubscriptionsByTopic(ws),
+      }))
+    }
   }
 
   async function broadcastSnapshots() {
+    const startedAt = performance.now()
     await maybePruneStaleEmptyChats()
+    const afterPruneAt = performance.now()
+    let socketCount = 0
     for (const ws of sockets) {
+      socketCount += 1
       await pushSnapshots(ws, { skipPrune: true })
+    }
+    if (isSendToStartingProfilingEnabled()) {
+      console.log("[kanna/send->starting][server]", JSON.stringify({
+        stage: "ws.broadcast_snapshots_completed",
+        elapsedMs: Number((performance.now() - startedAt).toFixed(1)),
+        pruneMs: Number((afterPruneAt - startedAt).toFixed(1)),
+        socketCount,
+        totalChatCount: store.state.chatsById.size,
+        totalProjectCount: store.state.projectsById.size,
+      }))
     }
   }
 
