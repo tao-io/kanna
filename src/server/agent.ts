@@ -1197,6 +1197,15 @@ export class AgentCoordinator {
     await this.dequeueAndStartQueuedMessage(command.chatId, queuedMessage, { steered: true })
   }
 
+  async dequeue(command: Extract<ClientCommand, { type: "message.dequeue" }>) {
+    const queuedMessage = this.store.getQueuedMessage(command.chatId, command.queuedMessageId)
+    if (!queuedMessage) {
+      throw new Error("Queued message not found")
+    }
+
+    await this.store.removeQueuedMessage(command.chatId, command.queuedMessageId)
+  }
+
   private async runClaudeSession(session: ClaudeSessionState) {
     try {
       for await (const event of session.session.stream) {

@@ -36,6 +36,7 @@ interface ChatTranscriptViewportProps {
   loadOlderHistory: () => Promise<void>
   onStopDraining: () => void
   onSteerQueuedMessage: (queuedMessageId: string) => Promise<void>
+  onRemoveQueuedMessage: (queuedMessageId: string) => Promise<void>
   onOpenLocalLink: KannaState["handleOpenLocalLink"]
   onAskUserQuestionSubmit: KannaState["handleAskUserQuestion"]
   onExitPlanModeConfirm: KannaState["handleExitPlanMode"]
@@ -65,6 +66,7 @@ export const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
   loadOlderHistory,
   onStopDraining,
   onSteerQueuedMessage,
+  onRemoveQueuedMessage,
   onOpenLocalLink,
   onAskUserQuestionSubmit,
   onExitPlanModeConfirm,
@@ -206,6 +208,7 @@ export const ChatTranscriptViewport = memo(function ChatTranscriptViewport({
         <QueuedUserMessage
           key={message.id}
           message={message}
+          onRemove={() => void onRemoveQueuedMessage(message.id)}
           onSendNow={() => void onSteerQueuedMessage(message.id)}
         />
       ))}

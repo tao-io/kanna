@@ -169,6 +169,11 @@ export type ClientCommand =
       chatId: string
       queuedMessageId: string
     }
+  | {
+      type: "message.dequeue"
+      chatId: string
+      queuedMessageId: string
+    }
   | { type: "terminal.create"; projectId: string; terminalId: string; cols: number; rows: number; scrollback: number }
   | { type: "terminal.input"; terminalId: string; data: string }
   | { type: "terminal.resize"; terminalId: string; cols: number; rows: number }

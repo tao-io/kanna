@@ -115,7 +115,8 @@ bun run build
 kanna                  # start with defaults (localhost only)
 kanna --port 4000      # custom port
 kanna --no-open        # don't open browser
-kanna --share          # create a public share URL + terminal QR
+kanna --share          # create a public quick tunnel + terminal QR
+kanna --share <token>  # run a named Cloudflare tunnel from a token
 ```
 
 Default URL: `http://localhost:3210`
@@ -140,9 +141,12 @@ Use `--share` to create a temporary public `trycloudflare.com` URL and print a t
 ```bash
 kanna --share
 kanna --share --port 4000
+kanna --share <token>
 ```
 
-`--share` is incompatible with `--host` and `--remote`. It does not open a browser automatically; instead it prints:
+`--share` is incompatible with `--host` and `--remote`. It does not open a browser automatically.
+
+Without a token, it prints:
 
 ```text
 QR Code:
@@ -155,6 +159,10 @@ Local URL:
 http://localhost:3210
 ```
 
+With `--share <token>`, Kanna runs `cloudflared tunnel run --token <token> --url <local-url>`.
+If Kanna can detect the public hostname from cloudflared output, it prints the same QR/public/local block.
+If not, it keeps the tunnel running, warns that no public hostname was detected, and prints the local URL so you can use the hostname already configured for that tunnel in Cloudflare.
+
 ## Development
 
 ```bash
@@ -166,6 +174,7 @@ The same `--remote` and `--host` flags can be used with `bun run dev` for remote
 
 ```bash
 bun run dev --share
+bun run dev --share <token>
 bun run dev --port 3333 --share
 ```
 

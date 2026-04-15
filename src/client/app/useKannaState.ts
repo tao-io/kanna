@@ -515,6 +515,7 @@ export interface KannaState {
   handleInstallUpdate: () => Promise<void>
   handleSend: (content: string, options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean }) => Promise<void>
   handleSteerQueuedMessage: (queuedMessageId: string) => Promise<void>
+  handleRemoveQueuedMessage: (queuedMessageId: string) => Promise<void>
   handleCancel: () => Promise<void>
   handleStopDraining: () => Promise<void>
   handleDeleteChat: (chat: SidebarChatRow) => Promise<void>
@@ -1300,6 +1301,20 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [activeChatId, socket])
 
+  const handleRemoveQueuedMessage = useCallback(async (queuedMessageId: string) => {
+    if (!activeChatId) return
+    try {
+      await socket.command({
+        type: "message.dequeue",
+        chatId: activeChatId,
+        queuedMessageId,
+      })
+      setCommandError(null)
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    }
+  }, [activeChatId, socket])
+
   const handleCancel = useCallback(async () => {
     if (!activeChatId) return
     try {
@@ -1538,6 +1553,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     handleInstallUpdate,
     handleSend,
     handleSteerQueuedMessage,
+    handleRemoveQueuedMessage,
     handleCancel,
     handleStopDraining,
     handleDeleteChat,

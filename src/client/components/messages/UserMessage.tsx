@@ -1,4 +1,4 @@
-import { CircleSlash, CornerDownRight, SquareSplitVertical } from "lucide-react"
+import { ChevronRight, GalleryVertical, ListPlus, MessageCircleDashed, SquircleDashed } from "lucide-react"
 import { useMemo, useState } from "react"
 import type { ChatAttachment } from "../../../shared/types"
 import Markdown from "react-markdown"
@@ -87,7 +87,7 @@ export function UserMessage({ content, attachments = [], steered = false }: Prop
                       aria-label="Sent mid-turn"
                       className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors"
                     >
-                      <CornerDownRight className="h-4 w-4" />
+                      <SquircleDashed className="h-4 w-4" />
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>Sent mid-turn</TooltipContent>

@@ -339,7 +339,7 @@ export function ChangelogSection({
                       
                   <span
                     className={cn(
-                      "bg-transparent border border-border text-secondary-foreground hover:text-secondary-foreground/60 disabled:text-secondary-foreground/50",
+                      "bg-transparent border border-border text-secondary-foreground",
                       'h-9 rounded-full px-3 text-sm',
                       "h-auto gap-1.5 px-3 py-1.5"
                     )}

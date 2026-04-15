@@ -24,6 +24,7 @@ function createDeps(overrides: Partial<Parameters<typeof runCli>[1]> = {}) {
       port: number
       host: string
       openBrowser: boolean
+      share: false | "quick" | { kind: "token"; token: string }
       strictPort: boolean
       update: {
         version: string
@@ -36,7 +37,7 @@ function createDeps(overrides: Partial<Parameters<typeof runCli>[1]> = {}) {
     openUrl: [] as string[],
     log: [] as string[],
     warn: [] as string[],
-    shareTunnel: [] as string[],
+    shareTunnel: [] as Array<{ localUrl: string; shareMode: "quick" | { kind: "token"; token: string } }>,
     renderShareQr: [] as string[],
     shareTunnelStops: 0,
   }
@@ -77,8 +78,8 @@ function createDeps(overrides: Partial<Parameters<typeof runCli>[1]> = {}) {
       calls.renderShareQr.push(url)
       return `[qr:${url}]`
     },
-    startShareTunnel: async (localUrl) => {
-      calls.shareTunnel.push(localUrl)
+    startShareTunnel: async (localUrl, shareMode) => {
+      calls.shareTunnel.push({ localUrl, shareMode })
       return {
         publicUrl: "https://kanna.trycloudflare.com",
         stop: () => {
@@ -139,7 +140,20 @@ describe("parseArgs", () => {
         port: 3210,
         host: "127.0.0.1",
         openBrowser: true,
-        share: true,
+        share: "quick",
+        strictPort: false,
+      },
+    })
+  })
+
+  test("--share accepts a token", () => {
+    expect(parseArgs(["--share", "secret-token"])).toEqual({
+      kind: "run",
+      options: {
+        port: 3210,
+        host: "127.0.0.1",
+        openBrowser: true,
+        share: { kind: "token", token: "secret-token" },
         strictPort: false,
       },
     })
@@ -302,7 +316,7 @@ describe("runCli", () => {
 
     expect(result.kind).toBe("started")
     expect(calls.openUrl).toEqual([])
-    expect(calls.shareTunnel).toEqual(["http://localhost:4000"])
+    expect(calls.shareTunnel).toEqual([{ localUrl: "http://localhost:4000", shareMode: "quick" }])
     expect(calls.renderShareQr).toEqual(["https://kanna.trycloudflare.com"])
     expect(calls.log).toContain("QR Code:")
     expect(calls.log).toContain("[qr:https://kanna.trycloudflare.com]")
@@ -354,7 +368,7 @@ describe("runCli", () => {
     const result = await runCli(["--share", "--port", "4000"], deps)
 
     expect(result.kind).toBe("started")
-    expect(calls.shareTunnel).toEqual(["http://localhost:4001"])
+    expect(calls.shareTunnel).toEqual([{ localUrl: "http://localhost:4001", shareMode: "quick" }])
   })
 
   test("fails cleanly when share tunnel startup fails", async () => {
@@ -380,6 +394,33 @@ describe("runCli", () => {
     expect(serverStopped).toBe(true)
     expect(calls.warn).toContain("[kanna] failed to start Cloudflare share tunnel")
     expect(calls.warn).toContain("[kanna] cloudflared unavailable")
+  })
+
+  test("keeps running when a named tunnel starts without a detected hostname", async () => {
+    const { calls, deps } = createDeps({
+      startShareTunnel: async (localUrl, shareMode) => {
+        calls.shareTunnel.push({ localUrl, shareMode })
+        return {
+          publicUrl: null,
+          stop: () => {
+            calls.shareTunnelStops += 1
+          },
+        }
+      },
+    })
+
+    const result = await runCli(["--share", "secret-token"], deps)
+
+    expect(result.kind).toBe("started")
+    expect(calls.shareTunnel).toEqual([{
+      localUrl: "http://localhost:3210",
+      shareMode: { kind: "token", token: "secret-token" },
+    }])
+    expect(calls.warn).toContain("[kanna] named tunnel started but no public hostname was detected")
+    expect(calls.warn).toContain("[kanna] use the hostname configured for the provided Cloudflare tunnel token")
+    expect(calls.log).toContain("Local URL:")
+    expect(calls.log).toContain("http://localhost:3210")
+    expect(calls.renderShareQr).toEqual([])
   })
 
   test("returns restarting when a newer version is available", async () => {

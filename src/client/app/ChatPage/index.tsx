@@ -900,6 +900,7 @@ export function ChatPage() {
           loadOlderHistory={state.loadOlderHistory}
           onStopDraining={state.handleStopDraining}
           onSteerQueuedMessage={state.handleSteerQueuedMessage}
+          onRemoveQueuedMessage={state.handleRemoveQueuedMessage}
           onOpenLocalLink={state.handleOpenLocalLink}
           onAskUserQuestionSubmit={state.handleAskUserQuestion}
           onExitPlanModeConfirm={state.handleExitPlanMode}

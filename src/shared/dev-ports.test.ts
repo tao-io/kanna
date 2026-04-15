@@ -4,6 +4,7 @@ import {
   getDefaultDevServerPort,
   parseDevArgs,
   resolveDevPorts,
+  stripShareArg,
   stripPortArg,
 } from "./dev-ports"
 
@@ -52,12 +53,33 @@ describe("stripPortArg", () => {
   })
 })
 
+describe("stripShareArg", () => {
+  test("removes --share and its optional token while preserving other args", () => {
+    expect(stripShareArg(["--remote", "--share", "secret-token", "--host", "dev-box"])).toEqual([
+      "--remote",
+      "--host",
+      "dev-box",
+    ])
+  })
+})
+
 describe("parseDevArgs", () => {
   test("derives dev share options from the client port", () => {
     expect(parseDevArgs(["--share", "--port", "3333"], "dev-machine")).toEqual({
       clientPort: 3333,
       serverPort: 3334,
-      share: true,
+      share: "quick",
+      backendTargetHost: "127.0.0.1",
+      allowedHosts: true,
+      serverArgs: [],
+    })
+  })
+
+  test("accepts a token-bearing dev share mode", () => {
+    expect(parseDevArgs(["--share", "secret-token", "--port", "3333"], "dev-machine")).toEqual({
+      clientPort: 3333,
+      serverPort: 3334,
+      share: { kind: "token", token: "secret-token" },
       backendTargetHost: "127.0.0.1",
       allowedHosts: true,
       serverArgs: [],
