@@ -856,7 +856,8 @@ async function listDirtyPaths(repoRoot: string) {
 
 async function readWorktreeFile(repoRoot: string, relativePath: string): Promise<string | null> {
   const absolutePath = path.join(repoRoot, relativePath)
-  if (!(await fileExists(absolutePath))) {
+  const fileInfo = await stat(absolutePath).catch(() => null)
+  if (!fileInfo?.isFile()) {
     return null
   }
 

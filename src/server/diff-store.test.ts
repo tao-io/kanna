@@ -270,6 +270,28 @@ describe("DiffStore", () => {
     })
   })
 
+  test("refreshSnapshot tolerates tracked files replaced by directories", async () => {
+    const repoRoot = await createRepo()
+    tempDirs.push(repoRoot)
+    await writeFile(path.join(repoRoot, "thing"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "init"], repoRoot)
+
+    await rm(path.join(repoRoot, "thing"), { force: true })
+    await mkdir(path.join(repoRoot, "thing"), { recursive: true })
+    await writeFile(path.join(repoRoot, "thing", "file.txt"), "nested\n", "utf8")
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+    await expect(store.refreshSnapshot("project-1", repoRoot)).resolves.toBe(true)
+
+    const snapshot = store.getProjectSnapshot("project-1")
+    expect(snapshot.status).toBe("ready")
+    expect(snapshot.files).toHaveLength(2)
+    expect(snapshot.files.map((file) => file.path)).toEqual(["thing", "thing/file.txt"])
+    expect(snapshot.files.map((file) => file.changeType)).toEqual(["deleted", "added"])
+  })
+
   test("discardFile reverts a tracked modified file", async () => {
     const repoRoot = await createRepo()
     tempDirs.push(repoRoot)
