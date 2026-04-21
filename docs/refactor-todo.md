@@ -16,7 +16,7 @@ Use `[x]` when an item is complete. Add any follow-up notes directly under the i
   Expected impact: less duplicated tunnel lifecycle and CLI parsing logic; no behavior change intended.
   Status: completed on 2026-04-21.
 
-- [ ] Sidebar project order persistence simplification
+- [x] Sidebar project order persistence simplification
   Commit: `1167a18`
   Scope: `src/server/events.ts`, `src/server/event-store.ts`, `src/server/read-models.ts`, snapshot/compaction plumbing
   Goals:
@@ -24,6 +24,7 @@ Use `[x]` when an item is complete. Add any follow-up notes directly under the i
   - Remove sidebar order from replay, `StoreState`, and compaction snapshot handling.
   - Keep restart/load behavior aligned with other preference storage patterns such as keybindings and LLM provider config.
   Expected impact: less event plumbing and lower blast radius for preference corruption.
+  Status: completed on 2026-04-21.
 
 - [ ] Model ID normalization consolidation
   Commit: `db77356`

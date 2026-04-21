@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import type { ClientRect } from "@dnd-kit/core"
 import type { SidebarChatRow, SidebarProjectGroup } from "../../../../shared/types"
 import { TooltipProvider } from "../../ui/tooltip"
-import { LocalProjectsSection } from "./LocalProjectsSection"
+import {
+  getProjectGroupReorderPreviewTargetId,
+  LocalProjectsSection,
+} from "./LocalProjectsSection"
 
 const nowMs = 1_000_000
 const hourMs = 60 * 60 * 1_000
@@ -38,6 +42,17 @@ function renderSection(projectGroups: SidebarProjectGroup[], expandedGroups = ne
       isConnected: true,
     })
   ))
+}
+
+function createRect(top: number, height = 80): ClientRect {
+  return {
+    top,
+    height,
+    left: 0,
+    width: 240,
+    right: 240,
+    bottom: top + height,
+  }
 }
 
 describe("LocalProjectsSection", () => {
@@ -88,5 +103,49 @@ describe("LocalProjectsSection", () => {
     expect(html).toContain("chat-5")
     expect(html).not.toContain("chat-6")
     expect(html).not.toContain("chat-7")
+  })
+
+  test("starts the downward reorder preview when dragged top plus 20px crosses the target center", () => {
+    const droppableRects = new Map([
+      ["project-a", createRect(0)],
+      ["project-b", createRect(80)],
+      ["project-c", createRect(160)],
+    ])
+
+    expect(getProjectGroupReorderPreviewTargetId({
+      activeId: "project-a",
+      groupIds: ["project-a", "project-b", "project-c"],
+      collisionRect: createRect(99),
+      droppableRects,
+    })).toBe("project-a")
+
+    expect(getProjectGroupReorderPreviewTargetId({
+      activeId: "project-a",
+      groupIds: ["project-a", "project-b", "project-c"],
+      collisionRect: createRect(100),
+      droppableRects,
+    })).toBe("project-b")
+  })
+
+  test("starts the upward reorder preview when dragged top plus 20px crosses the target center", () => {
+    const droppableRects = new Map([
+      ["project-a", createRect(0)],
+      ["project-b", createRect(80)],
+      ["project-c", createRect(160)],
+    ])
+
+    expect(getProjectGroupReorderPreviewTargetId({
+      activeId: "project-c",
+      groupIds: ["project-a", "project-b", "project-c"],
+      collisionRect: createRect(101),
+      droppableRects,
+    })).toBe("project-c")
+
+    expect(getProjectGroupReorderPreviewTargetId({
+      activeId: "project-c",
+      groupIds: ["project-a", "project-b", "project-c"],
+      collisionRect: createRect(100),
+      droppableRects,
+    })).toBe("project-b")
   })
 })

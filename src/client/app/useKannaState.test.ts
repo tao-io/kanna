@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  applySidebarProjectOrder,
   countMatchingUserPrompts,
   getActiveChatSnapshot,
   getNextMeasuredInputHeight,
@@ -106,6 +107,30 @@ describe("getNewestRemainingChatId", () => {
     const sidebarData = createSidebarData()
 
     expect(getNewestRemainingChatId(sidebarData.projectGroups, "missing")).toBeNull()
+  })
+})
+
+describe("applySidebarProjectOrder", () => {
+  test("reorders project groups immediately using the optimistic order", () => {
+    const sidebarData = createSidebarData()
+
+    expect(
+      applySidebarProjectOrder(sidebarData.projectGroups, ["project-2", "project-1"]).map((group) => group.groupKey)
+    ).toEqual(["project-2", "project-1"])
+  })
+
+  test("keeps unspecified groups at the end and ignores unknown ids", () => {
+    const sidebarData = createSidebarData()
+    const reordered = applySidebarProjectOrder(sidebarData.projectGroups, ["missing", "project-2"])
+
+    expect(reordered.map((group) => group.groupKey)).toEqual(["project-2", "project-1"])
+  })
+
+  test("returns the original array when the order already matches", () => {
+    const sidebarData = createSidebarData()
+    const reordered = applySidebarProjectOrder(sidebarData.projectGroups, ["project-1", "project-2"])
+
+    expect(reordered).toBe(sidebarData.projectGroups)
   })
 })
 

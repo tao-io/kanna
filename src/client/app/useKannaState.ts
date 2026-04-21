@@ -243,6 +243,41 @@ export function getNewestRemainingChatId(projectGroups: SidebarData["projectGrou
   return projectGroup.chats.find((chat) => chat.chatId !== activeChatId)?.chatId ?? null
 }
 
+export function applySidebarProjectOrder(
+  projectGroups: SidebarData["projectGroups"],
+  projectIds: string[] | null | undefined
+) {
+  if (!projectIds?.length || projectGroups.length <= 1) {
+    return projectGroups
+  }
+
+  const indexByProjectId = new Map(projectGroups.map((group, index) => [group.groupKey, index]))
+  const seen = new Set<string>()
+  const orderedGroups = projectIds
+    .map((projectId) => {
+      if (seen.has(projectId)) {
+        return null
+      }
+      seen.add(projectId)
+      const index = indexByProjectId.get(projectId)
+      return index === undefined ? null : projectGroups[index]
+    })
+    .filter((group): group is SidebarData["projectGroups"][number] => Boolean(group))
+
+  if (orderedGroups.length === 0) {
+    return projectGroups
+  }
+
+  const nextProjectGroups = [
+    ...orderedGroups,
+    ...projectGroups.filter((group) => !seen.has(group.groupKey)),
+  ]
+
+  return nextProjectGroups.every((group, index) => group === projectGroups[index])
+    ? projectGroups
+    : nextProjectGroups
+}
+
 export function shouldMarkActiveChatRead(doc: Pick<Document, "visibilityState" | "hasFocus"> = document) {
   return doc.visibilityState === "visible" && doc.hasFocus()
 }
@@ -550,6 +585,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const dialog = useAppDialog()
 
   const [sidebarData, setSidebarData] = useState<SidebarData>({ projectGroups: [] })
+  const [optimisticSidebarProjectOrder, setOptimisticSidebarProjectOrder] = useState<string[] | null>(null)
   const [localProjects, setLocalProjects] = useState<LocalProjectsSnapshot | null>(null)
   const [updateSnapshot, setUpdateSnapshot] = useState<UpdateSnapshot | null>(null)
   const [chatSnapshot, setChatSnapshot] = useState<ChatSnapshot | null>(null)
@@ -586,12 +622,32 @@ export function useKannaState(activeChatId: string | null): KannaState {
     diffs: null,
   })
   const editorLabel = getEditorPresetLabel(useTerminalPreferencesStore((store) => store.editorPreset))
+  const sidebarProjectGroups = useMemo(
+    () => applySidebarProjectOrder(sidebarData.projectGroups, optimisticSidebarProjectOrder),
+    [optimisticSidebarProjectOrder, sidebarData.projectGroups]
+  )
+  const resolvedSidebarData = useMemo(
+    () => (
+      sidebarProjectGroups === sidebarData.projectGroups
+        ? sidebarData
+        : {
+            ...sidebarData,
+            projectGroups: sidebarProjectGroups,
+          }
+    ),
+    [sidebarData, sidebarProjectGroups]
+  )
 
   useEffect(() => socket.onStatus(setConnectionStatus), [socket])
 
   useEffect(() => {
     return socket.subscribe<SidebarData>({ type: "sidebar" }, (snapshot) => {
       setSidebarData(snapshot)
+      setOptimisticSidebarProjectOrder((current) => (
+        current && applySidebarProjectOrder(snapshot.projectGroups, current) === snapshot.projectGroups
+          ? null
+          : current
+      ))
       setSidebarReady(true)
       setCommandError(null)
     })
@@ -780,8 +836,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
     logKannaState("subscribing to chat", {
       subscriptionId,
       activeChatId,
-      sidebarProjectGroups: sidebarData.projectGroups.length,
-      sidebarChatCount: sidebarData.projectGroups.reduce((count, group) => count + group.chats.length, 0),
+      sidebarProjectGroups: sidebarProjectGroups.length,
+      sidebarChatCount: sidebarProjectGroups.reduce((count, group) => count + group.chats.length, 0),
     })
     setChatSnapshot(null)
     setChatReady(false)
@@ -822,7 +878,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
       logKannaState("unsubscribing from chat", {
         subscriptionId,
         activeChatId,
-        sidebarProjectGroups: sidebarData.projectGroups.length,
+        sidebarProjectGroups: sidebarProjectGroups.length,
+        sidebarChatCount: sidebarProjectGroups.reduce((count, group) => count + group.chats.length, 0),
       })
       unsubscribe()
     }
@@ -830,16 +887,16 @@ export function useKannaState(activeChatId: string | null): KannaState {
 
   useEffect(() => {
     if (selectedProjectId) return
-    const firstGroup = sidebarData.projectGroups[0]
+    const firstGroup = sidebarProjectGroups[0]
     if (firstGroup) {
       setSelectedProjectId(firstGroup.groupKey)
     }
-  }, [selectedProjectId, sidebarData.projectGroups])
+  }, [selectedProjectId, sidebarProjectGroups])
 
   useEffect(() => {
     if (!activeChatId) return
     if (!sidebarReady || !chatReady) return
-    const exists = sidebarData.projectGroups.some((group) => group.chats.some((chat) => chat.chatId === activeChatId))
+    const exists = sidebarProjectGroups.some((group) => group.chats.some((chat) => chat.chatId === activeChatId))
     if (exists) {
       if (pendingChatId === activeChatId) {
         setPendingChatId(null)
@@ -850,7 +907,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       return
     }
     navigate("/")
-  }, [activeChatId, chatReady, navigate, pendingChatId, sidebarData.projectGroups, sidebarReady])
+  }, [activeChatId, chatReady, navigate, pendingChatId, sidebarProjectGroups, sidebarReady])
 
   useEffect(() => {
     if (!chatSnapshot) return
@@ -863,14 +920,14 @@ export function useKannaState(activeChatId: string | null): KannaState {
   useEffect(() => {
     if (!activeChatId || !sidebarReady) return
     if (!shouldMarkActiveChatRead()) return
-    const activeSidebarChat = sidebarData.projectGroups
+    const activeSidebarChat = sidebarProjectGroups
       .flatMap((group) => group.chats)
       .find((chat) => chat.chatId === activeChatId)
     if (!activeSidebarChat?.unread) return
     void socket.command({ type: "chat.markRead", chatId: activeChatId }).catch((error) => {
       setCommandError(error instanceof Error ? error.message : String(error))
     })
-  }, [activeChatId, focusEpoch, sidebarData.projectGroups, sidebarReady, socket])
+  }, [activeChatId, focusEpoch, sidebarProjectGroups, sidebarReady, socket])
 
   useEffect(() => {
     setOlderHistoryEntries([])
@@ -885,9 +942,9 @@ export function useKannaState(activeChatId: string | null): KannaState {
   )
   const activeProjectId = useMemo(
     () => activeChatSnapshot?.runtime.projectId
-      ?? getProjectIdForChat(sidebarData.projectGroups, activeChatId)
+      ?? getProjectIdForChat(sidebarProjectGroups, activeChatId)
       ?? selectedProjectId,
-    [activeChatId, activeChatSnapshot?.runtime.projectId, selectedProjectId, sidebarData.projectGroups]
+    [activeChatId, activeChatSnapshot?.runtime.projectId, selectedProjectId, sidebarProjectGroups]
   )
   const chatDiffSnapshot = useMemo(() => {
     const currentDiffs = activeProjectId ? (projectDiffSnapshots[activeProjectId] ?? null) : null
@@ -972,11 +1029,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const navbarLocalPath =
     runtime?.localPath
     ?? fallbackLocalProjectPath
-    ?? sidebarData.projectGroups[0]?.localPath
+    ?? sidebarProjectGroups[0]?.localPath
   const hasSelectedProject = Boolean(
     selectedProjectId
     ?? runtime?.projectId
-    ?? sidebarData.projectGroups[0]?.groupKey
+    ?? sidebarProjectGroups[0]?.groupKey
     ?? fallbackLocalProjectPath
   )
 
@@ -1295,7 +1352,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     })
 
     try {
-      let projectId = selectedProjectId ?? sidebarData.projectGroups[0]?.groupKey ?? null
+      let projectId = selectedProjectId ?? sidebarProjectGroups[0]?.groupKey ?? null
       if (!activeChatId && !projectId && fallbackLocalProjectPath) {
         const project = await socket.command<{ projectId: string }>({
           type: "project.open",
@@ -1358,7 +1415,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       setCommandError(error instanceof Error ? error.message : String(error))
       throw error
     }
-  }, [activeChatId, fallbackLocalProjectPath, isProcessing, navigate, optimisticUserPrompts, selectedProjectId, serverTranscriptEntries, sidebarData.projectGroups, socket])
+  }, [activeChatId, fallbackLocalProjectPath, isProcessing, navigate, optimisticUserPrompts, selectedProjectId, serverTranscriptEntries, sidebarProjectGroups, socket])
 
   const handleSteerQueuedMessage = useCallback(async (queuedMessageId: string) => {
     if (!activeChatId) return
@@ -1417,16 +1474,16 @@ export function useKannaState(activeChatId: string | null): KannaState {
     try {
       await socket.command({ type: "chat.delete", chatId: chat.chatId })
       if (chat.chatId === activeChatId) {
-        const nextChatId = getNewestRemainingChatId(sidebarData.projectGroups, chat.chatId)
+        const nextChatId = getNewestRemainingChatId(sidebarProjectGroups, chat.chatId)
         navigate(nextChatId ? `/chat/${nextChatId}` : "/")
       }
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
-  }, [activeChatId, dialog, navigate, sidebarData.projectGroups, socket])
+  }, [activeChatId, dialog, navigate, sidebarProjectGroups, socket])
 
   const handleRemoveProject = useCallback(async (projectId: string) => {
-    const project = sidebarData.projectGroups.find((group) => group.groupKey === projectId)
+    const project = sidebarProjectGroups.find((group) => group.groupKey === projectId)
     if (!project) return
     const projectName = project.localPath.split("/").filter(Boolean).pop() ?? project.localPath
     const confirmed = await dialog.confirm({
@@ -1448,13 +1505,15 @@ export function useKannaState(activeChatId: string | null): KannaState {
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
-  }, [dialog, navigate, runtime?.projectId, sidebarData.projectGroups, socket])
+  }, [dialog, navigate, runtime?.projectId, sidebarProjectGroups, socket])
 
   const handleReorderProjectGroups = useCallback(async (projectIds: string[]) => {
+    setOptimisticSidebarProjectOrder(projectIds)
     try {
       await socket.command({ type: "sidebar.reorderProjectGroups", projectIds })
       setCommandError(null)
     } catch (error) {
+      setOptimisticSidebarProjectOrder(null)
       setCommandError(error instanceof Error ? error.message : String(error))
     }
   }, [socket])
@@ -1480,7 +1539,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   }, [socket])
 
   const handleOpenExternal = useCallback(async (action: "open_finder" | "open_terminal" | "open_editor") => {
-    const localPath = runtime?.localPath ?? localProjects?.projects[0]?.localPath ?? sidebarData.projectGroups[0]?.localPath
+    const localPath = runtime?.localPath ?? localProjects?.projects[0]?.localPath ?? sidebarProjectGroups[0]?.localPath
     if (!localPath) return
     try {
       await openExternal({
@@ -1490,7 +1549,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
-  }, [localProjects?.projects, openExternal, runtime?.localPath, sidebarData.projectGroups])
+  }, [localProjects?.projects, openExternal, runtime?.localPath, sidebarProjectGroups])
 
   const handleCopyPath = useCallback(async (localPath: string) => {
     try {
@@ -1531,7 +1590,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const handleCompose = useCallback(() => {
     const intent = resolveComposeIntent({
       selectedProjectId,
-      sidebarProjectId: sidebarData.projectGroups[0]?.groupKey,
+      sidebarProjectId: sidebarProjectGroups[0]?.groupKey,
       fallbackLocalProjectPath,
     })
     if (intent) {
@@ -1540,7 +1599,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
 
     navigate("/")
-  }, [fallbackLocalProjectPath, navigate, selectedProjectId, sidebarData.projectGroups, startChatFromIntent])
+  }, [fallbackLocalProjectPath, navigate, selectedProjectId, sidebarProjectGroups, startChatFromIntent])
 
   const openSidebar = useCallback(() => setSidebarOpen(true), [])
   const closeSidebar = useCallback(() => setSidebarOpen(false), [])
@@ -1592,7 +1651,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     socket,
     activeChatId,
     activeProjectId,
-    sidebarData,
+    sidebarData: resolvedSidebarData,
     localProjects,
     updateSnapshot,
     chatSnapshot,

@@ -863,12 +863,16 @@ describe("ws-router", () => {
     })
 
     const setSidebarProjectOrderCalls: string[][] = []
+    let sidebarProjectOrder: string[] = []
     const router = createWsRouter({
       store: {
         state,
+        getSidebarProjectOrder() {
+          return [...sidebarProjectOrder]
+        },
         async setSidebarProjectOrder(projectIds: string[]) {
           setSidebarProjectOrderCalls.push(projectIds)
-          state.sidebarProjectOrder = [...projectIds]
+          sidebarProjectOrder = [...projectIds]
         },
       } as never,
       agent: { getActiveStatuses: () => new Map(), getDrainingChatIds: () => new Set() } as never,

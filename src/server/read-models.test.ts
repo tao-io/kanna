@@ -26,7 +26,7 @@ describe("read models", () => {
       lastTurnOutcome: null,
     })
 
-    const sidebar = deriveSidebarData(state, new Map(), 1_000_000)
+    const sidebar = deriveSidebarData(state, new Map(), { nowMs: 1_000_000 })
     expect(sidebar.projectGroups[0]?.chats[0]?.provider).toBe("codex")
     expect(sidebar.projectGroups[0]?.chats[0]?.unread).toBe(true)
     expect(sidebar.projectGroups[0]?.previewChats.map((chat) => chat.chatId)).toEqual(["chat-1"])
@@ -198,9 +198,7 @@ describe("read models", () => {
       createdAt: 3,
       updatedAt: 15,
     })
-    state.sidebarProjectOrder = ["project-1"]
-
-    const sidebar = deriveSidebarData(state, new Map())
+    const sidebar = deriveSidebarData(state, new Map(), { sidebarProjectOrder: ["project-1"] })
 
     expect(sidebar.projectGroups.map((group) => group.groupKey)).toEqual(["project-1", "project-2", "project-3"])
   })
@@ -242,7 +240,7 @@ describe("read models", () => {
       lastTurnOutcome: null,
     })
 
-    const sidebar = deriveSidebarData(state, new Map(), 1_000_000)
+    const sidebar = deriveSidebarData(state, new Map(), { nowMs: 1_000_000 })
 
     expect(sidebar.projectGroups[0]?.previewChats.map((chat) => chat.chatId)).toEqual(["chat-1"])
     expect(sidebar.projectGroups[0]?.olderChats.map((chat) => chat.chatId)).toEqual(["chat-2"])

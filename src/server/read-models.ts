@@ -49,8 +49,12 @@ function getSidebarChatBuckets(chats: SidebarChatRow[], nowMs: number) {
 export function deriveSidebarData(
   state: StoreState,
   activeStatuses: Map<string, KannaStatus>,
-  nowMs = Date.now()
+  options?: {
+    nowMs?: number
+    sidebarProjectOrder?: string[]
+  }
 ): SidebarData {
+  const nowMs = options?.nowMs ?? Date.now()
   const chatsByProjectId = new Map<string, ChatRecord[]>()
   for (const chat of state.chatsById.values()) {
     if (chat.deletedAt) continue
@@ -67,7 +71,7 @@ export function deriveSidebarData(
   const unorderedProjects = allProjects
     .sort((a, b) => b.updatedAt - a.updatedAt)
   const projectById = new Map(unorderedProjects.map((project) => [project.id, project]))
-  const orderedProjects = state.sidebarProjectOrder
+  const orderedProjects = (options?.sidebarProjectOrder ?? [])
     .map((projectId) => projectById.get(projectId))
     .filter((project): project is NonNullable<typeof project> => Boolean(project))
   const orderedProjectIds = new Set(orderedProjects.map((project) => project.id))

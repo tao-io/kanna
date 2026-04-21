@@ -20,6 +20,25 @@ import { resolveLocalPath } from "./paths"
 
 const COMPACTION_THRESHOLD_BYTES = 2 * 1024 * 1024
 const STALE_EMPTY_CHAT_MAX_AGE_MS = 30 * 60 * 1000
+const SIDEBAR_PROJECT_ORDER_FILE = "sidebar-order.json"
+
+function normalizeSidebarProjectOrder(value: unknown) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seen = new Set<string>()
+  const projectIds: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== "string") continue
+    const projectId = entry.trim()
+    if (!projectId || seen.has(projectId)) continue
+    seen.add(projectId)
+    projectIds.push(projectId)
+  }
+
+  return projectIds
+}
 
 function isSendToStartingProfilingEnabled() {
   return process.env.KANNA_PROFILE_SEND_TO_STARTING === "1"
@@ -59,7 +78,6 @@ function getReplayEventPriority(event: StoreEvent) {
   switch (event.type) {
     case "project_opened":
     case "project_removed":
-    case "sidebar_project_order_set":
       return 0
     case "chat_created":
       return 1
@@ -124,7 +142,10 @@ export class EventStore {
   private readonly queuedMessagesLogPath: string
   private readonly turnsLogPath: string
   private readonly transcriptsDir: string
+  private readonly sidebarProjectOrderPath: string
   private legacyMessagesByChatId = new Map<string, TranscriptEntry[]>()
+  private legacySidebarProjectOrder: string[] = []
+  private sidebarProjectOrder: string[] = []
   private snapshotHasLegacyMessages = false
   private cachedTranscript: { chatId: string; entries: TranscriptEntry[] } | null = null
 
@@ -137,6 +158,7 @@ export class EventStore {
     this.queuedMessagesLogPath = path.join(this.dataDir, "queued-messages.jsonl")
     this.turnsLogPath = path.join(this.dataDir, "turns.jsonl")
     this.transcriptsDir = path.join(this.dataDir, "transcripts")
+    this.sidebarProjectOrderPath = path.join(this.dataDir, SIDEBAR_PROJECT_ORDER_FILE)
   }
 
   async initialize() {
@@ -149,6 +171,7 @@ export class EventStore {
     await this.ensureFile(this.turnsLogPath)
     await this.loadSnapshot()
     await this.replayLogs()
+    await this.loadSidebarProjectOrder()
     if (!(await this.hasLegacyTranscriptData()) && await this.shouldCompact()) {
       await this.compact()
     }
@@ -199,7 +222,7 @@ export class EventStore {
           unread: chat.unread ?? false,
         })
       }
-      this.state.sidebarProjectOrder = [...(parsed.sidebarProjectOrder ?? [])]
+      this.legacySidebarProjectOrder = normalizeSidebarProjectOrder(parsed.sidebarProjectOrder)
       if (parsed.queuedMessages?.length) {
         for (const queuedSet of parsed.queuedMessages) {
           this.state.queuedMessagesByChatId.set(queuedSet.chatId, queuedSet.entries.map((entry) => ({
@@ -225,13 +248,94 @@ export class EventStore {
     this.state.projectIdsByPath.clear()
     this.state.chatsById.clear()
     this.state.queuedMessagesByChatId.clear()
-    this.state.sidebarProjectOrder = []
+    this.sidebarProjectOrder = []
+    this.legacySidebarProjectOrder = []
     this.cachedTranscript = null
   }
 
   private clearLegacyTranscriptState() {
     this.legacyMessagesByChatId.clear()
     this.snapshotHasLegacyMessages = false
+  }
+
+  private async loadSidebarProjectOrder() {
+    const file = Bun.file(this.sidebarProjectOrderPath)
+    if (await file.exists()) {
+      try {
+        const text = await file.text()
+        if (!text.trim()) {
+          this.sidebarProjectOrder = []
+          return
+        }
+        this.sidebarProjectOrder = normalizeSidebarProjectOrder(JSON.parse(text))
+      } catch (error) {
+        console.warn(`${LOG_PREFIX} Failed to load ${SIDEBAR_PROJECT_ORDER_FILE}, ignoring saved order:`, error)
+        this.sidebarProjectOrder = []
+      }
+      return
+    }
+
+    const legacySidebarProjectOrder = await this.loadLegacySidebarProjectOrder()
+    this.sidebarProjectOrder = legacySidebarProjectOrder
+    if (legacySidebarProjectOrder.length > 0) {
+      await this.writeSidebarProjectOrderFile(legacySidebarProjectOrder)
+    }
+  }
+
+  private async loadLegacySidebarProjectOrder() {
+    const fromProjectsLog = await this.readLegacySidebarProjectOrderFromProjectsLog()
+    if (fromProjectsLog.length > 0) {
+      return fromProjectsLog
+    }
+    return [...this.legacySidebarProjectOrder]
+  }
+
+  private async readLegacySidebarProjectOrderFromProjectsLog() {
+    const file = Bun.file(this.projectsLogPath)
+    if (!(await file.exists())) return []
+
+    const text = await file.text()
+    if (!text.trim()) return []
+
+    const lines = text.split("\n")
+    let lastNonEmpty = -1
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (lines[index].trim()) {
+        lastNonEmpty = index
+        break
+      }
+    }
+
+    let projectIds: string[] = []
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index].trim()
+      if (!line) continue
+      try {
+        const event = JSON.parse(line) as {
+          v?: number
+          type?: string
+          projectIds?: unknown
+        }
+        if (event.v !== STORE_VERSION || event.type !== "sidebar_project_order_set") {
+          continue
+        }
+        projectIds = normalizeSidebarProjectOrder(event.projectIds)
+      } catch (error) {
+        if (index === lastNonEmpty) {
+          console.warn(`${LOG_PREFIX} Ignoring corrupt trailing line in ${path.basename(this.projectsLogPath)} while migrating sidebar order`)
+          return projectIds
+        }
+        console.warn(`${LOG_PREFIX} Failed to migrate sidebar order from ${path.basename(this.projectsLogPath)}:`, error)
+        return []
+      }
+    }
+
+    return projectIds
+  }
+
+  private async writeSidebarProjectOrderFile(projectIds: string[]) {
+    await mkdir(this.dataDir, { recursive: true })
+    await writeFile(this.sidebarProjectOrderPath, `${JSON.stringify(projectIds, null, 2)}\n`, "utf8")
   }
 
   private async replayLogs() {
@@ -283,6 +387,9 @@ export class EventStore {
           await this.clearStorage()
           return []
         }
+        if ((event as { type?: unknown }).type === "sidebar_project_order_set") {
+          continue
+        }
         parsedEvents.push({
           event: event as StoreEvent,
           sourceIndex,
@@ -323,10 +430,6 @@ export class EventStore {
         project.deletedAt = event.timestamp
         project.updatedAt = event.timestamp
         this.state.projectIdsByPath.delete(project.localPath)
-        break
-      }
-      case "sidebar_project_order_set": {
-        this.state.sidebarProjectOrder = [...event.projectIds]
         break
       }
       case "chat_created": {
@@ -541,7 +644,7 @@ export class EventStore {
     })
 
     const uniqueProjectIds = [...new Set(validProjectIds)]
-    const current = this.state.sidebarProjectOrder
+    const current = this.sidebarProjectOrder
     if (
       uniqueProjectIds.length === current.length
       && uniqueProjectIds.every((projectId, index) => current[index] === projectId)
@@ -549,13 +652,11 @@ export class EventStore {
       return
     }
 
-    const event: ProjectEvent = {
-      v: STORE_VERSION,
-      type: "sidebar_project_order_set",
-      timestamp: Date.now(),
-      projectIds: uniqueProjectIds,
-    }
-    await this.append(this.projectsLogPath, event)
+    this.writeChain = this.writeChain.then(async () => {
+      await this.writeSidebarProjectOrderFile(uniqueProjectIds)
+      this.sidebarProjectOrder = [...uniqueProjectIds]
+    })
+    return this.writeChain
   }
 
   async createChat(projectId: string) {
@@ -830,6 +931,10 @@ export class EventStore {
     return chat
   }
 
+  getSidebarProjectOrder() {
+    return [...this.sidebarProjectOrder]
+  }
+
   private getMessagesPageFromEntries(entries: TranscriptEntry[], limit: number, beforeIndex?: number): TranscriptPageResult {
     if (entries.length === 0) {
       return { entries: [], hasOlder: false, olderCursor: null }
@@ -961,7 +1066,6 @@ export class EventStore {
       v: STORE_VERSION,
       generatedAt: Date.now(),
       projects: this.listProjects().map((project) => ({ ...project })),
-      sidebarProjectOrder: [...this.state.sidebarProjectOrder],
       chats: [...this.state.chatsById.values()]
         .filter((chat) => !chat.deletedAt)
         .map((chat) => ({ ...chat })),

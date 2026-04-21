@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useMemo, useRef } from "react"
+import { memo, type ReactNode, useMemo } from "react"
 import { ChevronRight, FolderOpen, Loader2, SquarePen } from "lucide-react"
 import {
   DndContext,
@@ -7,8 +7,10 @@ import {
   useSensor,
   useSensors,
   closestCenter,
-  type DragStartEvent,
+  type ClientRect,
+  type CollisionDetection,
   type DragEndEvent,
+  type UniqueIdentifier,
 } from "@dnd-kit/core"
 import {
   SortableContext,
@@ -58,6 +60,62 @@ interface SortableProjectGroupProps {
   startingLocalPath?: string | null
 }
 
+const DRAG_REORDER_TRIGGER_OFFSET_PX = 20
+
+type RectLookup = {
+  get(id: UniqueIdentifier): ClientRect | undefined
+}
+
+function getRectCenterY(rect: Pick<ClientRect, "top" | "height">) {
+  return rect.top + rect.height / 2
+}
+
+export function getProjectGroupReorderPreviewTargetId({
+  activeId,
+  groupIds,
+  collisionRect,
+  droppableRects,
+}: {
+  activeId: string
+  groupIds: string[]
+  collisionRect: Pick<ClientRect, "top">
+  droppableRects: RectLookup
+}) {
+  const activeIndex = groupIds.indexOf(activeId)
+  if (activeIndex === -1) return null
+
+  const activeRect = droppableRects.get(activeId)
+  if (!activeRect) return null
+
+  const previewTriggerY = collisionRect.top + DRAG_REORDER_TRIGGER_OFFSET_PX
+
+  if (collisionRect.top > activeRect.top) {
+    for (let index = groupIds.length - 1; index > activeIndex; index--) {
+      const rect = droppableRects.get(groupIds[index])
+      if (!rect) continue
+      if (previewTriggerY >= getRectCenterY(rect)) {
+        return groupIds[index]
+      }
+    }
+
+    return activeId
+  }
+
+  if (collisionRect.top < activeRect.top) {
+    for (let index = 0; index < activeIndex; index++) {
+      const rect = droppableRects.get(groupIds[index])
+      if (!rect) continue
+      if (previewTriggerY <= getRectCenterY(rect)) {
+        return groupIds[index]
+      }
+    }
+
+    return activeId
+  }
+
+  return activeId
+}
+
 const SortableProjectGroup = memo(function SortableProjectGroup({
   group,
   editorLabel,
@@ -88,8 +146,8 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
   } = useSortable({ id: groupKey })
 
   const style = {
-    transform: CSS.Translate.toString(transform),
-    transition,
+    transform: CSS.Translate.toString(transform ? { ...transform, x: 0 } : null),
+    transition: isDragging ? undefined : transition,
   }
 
   const header = (
@@ -97,7 +155,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
       ref={setActivatorNodeRef}
       className={cn(
         "sticky top-0 bg-background dark:bg-card z-10 relative p-[10px] flex items-center justify-between",
-        "cursor-grab active:cursor-grabbing",
+        "cursor-grab active:cursor-grabbing select-none touch-none",
         isDragging && "cursor-grabbing"
       )}
       onClick={() => onToggleSection(groupKey)}
@@ -221,7 +279,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
   startingLocalPath,
 }: Props) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 2 } }),
     useSensor(KeyboardSensor)
   )
 
@@ -230,17 +288,36 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
     [projectGroups]
   )
 
-  const wasOpenBeforeDragRef = useRef<string | null>(null)
+  const collisionDetection = useMemo<CollisionDetection>(() => (args) => {
+    const overId = getProjectGroupReorderPreviewTargetId({
+      activeId: String(args.active.id),
+      groupIds,
+      collisionRect: args.collisionRect,
+      droppableRects: args.droppableRects,
+    })
 
-  function handleDragStart(event: DragStartEvent) {
-    const key = event.active.id as string
-    if (!collapsedSections.has(key)) {
-      wasOpenBeforeDragRef.current = key
-      onToggleSection(key)
-    } else {
-      wasOpenBeforeDragRef.current = null
+    if (!overId) {
+      return closestCenter(args)
     }
-  }
+
+    const overContainer = args.droppableContainers.find(
+      (container) => container.id === overId
+    )
+
+    if (!overContainer) {
+      return closestCenter(args)
+    }
+
+    return [
+      {
+        id: overContainer.id,
+        data: {
+          droppableContainer: overContainer,
+          value: 0,
+        },
+      },
+    ]
+  }, [groupIds])
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -253,19 +330,12 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
         onReorderGroups(newOrder)
       }
     }
-
-    if (wasOpenBeforeDragRef.current) {
-      const keyToReopen = wasOpenBeforeDragRef.current
-      wasOpenBeforeDragRef.current = null
-      requestAnimationFrame(() => onToggleSection(keyToReopen))
-    }
   }
 
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
+      collisionDetection={collisionDetection}
       onDragEnd={handleDragEnd}
     >
       <SortableContext items={groupIds} strategy={verticalListSortingStrategy}>

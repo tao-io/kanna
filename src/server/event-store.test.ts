@@ -354,13 +354,85 @@ describe("EventStore", () => {
     const second = await store.openProject("/tmp/project-b")
 
     await store.setSidebarProjectOrder([second.id, first.id])
-    expect(store.state.sidebarProjectOrder).toEqual([second.id, first.id])
+    expect(store.getSidebarProjectOrder()).toEqual([second.id, first.id])
+    expect(JSON.parse(await readFile(join(dataDir, "sidebar-order.json"), "utf8"))).toEqual([second.id, first.id])
 
     await store.compact()
 
+    const snapshot = JSON.parse(await readFile(join(dataDir, "snapshot.json"), "utf8")) as SnapshotFile
+    expect(snapshot.sidebarProjectOrder).toBeUndefined()
+
     const reloaded = new EventStore(dataDir)
     await reloaded.initialize()
-    expect(reloaded.state.sidebarProjectOrder).toEqual([second.id, first.id])
+    expect(reloaded.getSidebarProjectOrder()).toEqual([second.id, first.id])
+  })
+
+  test("migrates legacy sidebar project order from existing snapshots and project logs", async () => {
+    const dataDir = await createTempDataDir()
+    const snapshotPath = join(dataDir, "snapshot.json")
+    const projectsLogPath = join(dataDir, "projects.jsonl")
+
+    const snapshot: SnapshotFile = {
+      v: 2,
+      generatedAt: 10,
+      projects: [
+        {
+          id: "project-1",
+          localPath: "/tmp/project-a",
+          title: "Project A",
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: "project-2",
+          localPath: "/tmp/project-b",
+          title: "Project B",
+          createdAt: 2,
+          updatedAt: 2,
+        },
+      ],
+      chats: [],
+      sidebarProjectOrder: ["project-1"],
+    }
+
+    await writeFile(snapshotPath, JSON.stringify(snapshot, null, 2), "utf8")
+    await writeFile(projectsLogPath, [
+      JSON.stringify({
+        v: 2,
+        type: "sidebar_project_order_set",
+        timestamp: 20,
+        projectIds: ["project-2", "project-1"],
+      }),
+      "",
+    ].join("\n"), "utf8")
+
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    expect(store.getSidebarProjectOrder()).toEqual(["project-2", "project-1"])
+    expect(JSON.parse(await readFile(join(dataDir, "sidebar-order.json"), "utf8"))).toEqual(["project-2", "project-1"])
+  })
+
+  test("ignores an invalid sidebar order file without resetting store state", async () => {
+    const dataDir = await createTempDataDir()
+    await writeFile(join(dataDir, "sidebar-order.json"), "{not-json", "utf8")
+
+    const originalWarn = console.warn
+    console.warn = () => {}
+    try {
+      const store = new EventStore(dataDir)
+      await store.initialize()
+
+      const project = await store.openProject("/tmp/project")
+
+      const reloaded = new EventStore(dataDir)
+      await reloaded.initialize()
+
+      expect(reloaded.getProject(project.id)?.localPath).toBe("/tmp/project")
+      expect(reloaded.getSidebarProjectOrder()).toEqual([])
+    } finally {
+      console.warn = originalWarn
+    }
   })
 
   test("prunes stale empty chats after thirty minutes", async () => {
