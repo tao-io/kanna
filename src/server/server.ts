@@ -58,6 +58,7 @@ export async function persistUploadedFiles(args: {
 export interface StartKannaServerOptions {
   port?: number
   host?: string
+  dataDir?: string
   password?: string | null
   strictPort?: boolean
   /**
@@ -80,7 +81,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   const hostname = options.host ?? "127.0.0.1"
   const strictPort = options.strictPort ?? false
   const auth = options.password ? createAuthManager(options.password, { trustProxy: options.trustProxy ?? false }) : null
-  const store = new EventStore()
+  const store = new EventStore(options.dataDir)
   const diffStore = new DiffStore(store.dataDir)
   const machineDisplayName = getMachineDisplayName()
   await store.initialize()
@@ -190,7 +191,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
               if (!auth.isAuthenticated(req)) {
                 return new Response("Unauthorized", { status: 401 })
               }
-            } else if ((url.pathname === "/health" || url.pathname.startsWith("/api/")) && !auth.isAuthenticated(req)) {
+            } else if (url.pathname.startsWith("/api/") && !auth.isAuthenticated(req)) {
               return Response.json({ error: "Unauthorized" }, { status: 401 })
             }
           }
@@ -452,7 +453,9 @@ async function serveStatic(distDir: string, pathname: string) {
 
   const file = Bun.file(filePath)
   if (await file.exists()) {
-    return new Response(file)
+    return new Response(file, {
+      headers: getStaticHeaders(requestedPath),
+    })
   }
 
   const indexFile = Bun.file(indexPath)
@@ -460,6 +463,7 @@ async function serveStatic(distDir: string, pathname: string) {
     return new Response(indexFile, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
       },
     })
   }
@@ -468,4 +472,14 @@ async function serveStatic(distDir: string, pathname: string) {
     `${APP_NAME} client bundle not found. Run \`bun run build\` inside workbench/ first.`,
     { status: 503 }
   )
+}
+
+function getStaticHeaders(requestedPath: string) {
+  if (requestedPath.endsWith(".html")) {
+    return {
+      "Cache-Control": "no-store",
+    }
+  }
+
+  return undefined
 }

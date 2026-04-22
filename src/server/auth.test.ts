@@ -13,8 +13,11 @@ afterEach(async () => {
 
 async function startPasswordServer(options: { trustProxy?: boolean; port?: number } = {}) {
   const projectDir = await mkdtemp(path.join(tmpdir(), "kanna-auth-test-"))
+  const dataDir = await mkdtemp(path.join(tmpdir(), "kanna-auth-data-"))
   tempDirs.push(projectDir)
+  tempDirs.push(dataDir)
   const server = await startKannaServer({
+    dataDir,
     port: options.port ?? 4320,
     strictPort: true,
     password: "secret",
@@ -37,8 +40,20 @@ describe("password auth", () => {
     try {
       const response = await fetch(`http://localhost:${server.port}/chat/demo`, { headers: { Accept: "text/html" } })
       expect(response.status).toBe(200)
+      expect(response.headers.get("cache-control")).toBe("no-store")
       expect(response.headers.get("content-type")).toContain("text/html")
       expect(await response.text()).toContain('id="root"')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test("serves health checks without authentication", async () => {
+    const { server } = await startPasswordServer()
+
+    try {
+      const response = await fetch(`http://localhost:${server.port}/health`, { redirect: "manual" })
+      expect(response.status).toBe(200)
     } finally {
       await server.stop()
     }
@@ -48,7 +63,7 @@ describe("password auth", () => {
     const { server } = await startPasswordServer()
 
     try {
-      const response = await fetch(`http://localhost:${server.port}/health`, { redirect: "manual" })
+      const response = await fetch(`http://localhost:${server.port}/api/projects/project-1/uploads`, { redirect: "manual" })
       expect(response.status).toBe(401)
     } finally {
       await server.stop()
@@ -306,7 +321,7 @@ describe("password auth", () => {
           Cookie: cookie,
         },
       })
-      expect(healthResponse.status).toBe(401)
+      expect(healthResponse.status).toBe(200)
     } finally {
       await server.stop()
     }
